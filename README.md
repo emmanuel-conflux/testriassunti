@@ -75,7 +75,7 @@ C:\
 ### Esecuzione Base
 
 ```bash
-python riassumi_libri.py
+python riassumi.py
 ```
 
 Questo comando:
@@ -86,7 +86,7 @@ Questo comando:
 ### Parametri Configurabili
 
 ```bash
-python riassumi_libri.py [opzioni]
+python riassumi.py [opzioni]
 
 Opzioni:
   --model MODEL          Modello Ollama (default: qwen3:8b)
@@ -101,22 +101,22 @@ Opzioni:
 
 #### Usare un modello diverso
 ```bash
-python riassumi_libri.py --model llama3:70b
+python riassumi.py --model llama3:70b
 ```
 
 #### Directory personalizzate
 ```bash
-python riassumi_libri.py --input_dir /path/to/books --output_dir /path/to/output
+python riassumi.py --input_dir /path/to/books --output_dir /path/to/output
 ```
 
 #### Capitoli più lunghi
 ```bash
-python riassumi_libri.py --min_words 500
+python riassumi.py --min_words 500
 ```
 
 #### Configurazione completa
 ```bash
-python riassumi_libri.py \
+python riassumi.py \
   --model qwen3:30b \
   --input_dir "D:\Libri" \
   --output_dir "D:\Riassunti" \

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-riassumi_libri.py - CLI Tool per Riassunti di Libri via Ollama
+riassumi.py - CLI Tool per Riassunti di Libri via Ollama
 
 Legge file EPUB o PDF, li analizza tramite Ollama locale e genera
 riassunti dettagliati capitolo per capitolo in formato DOCX e Markdown.

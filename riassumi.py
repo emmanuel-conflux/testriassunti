@@ -77,26 +77,32 @@ CHUNK_PRESETS = {
 # Prompt templates
 PROMPT_MAP = """Sei un analista testuale.
 Il testo può essere in italiano o inglese, ma rispondi solo in italiano.
-Crea un riassunto dettagliato del seguente frammento.
+Crea un riassunto dettagliato e completo del seguente frammento.
 
-# Sintesi (400–600 parole)
+IMPORTANTE: Il riassunto deve essere di ALMENO 2000 PAROLE e NON deve essere troncato.
+
+Includi:
+# Sintesi completa e dettagliata (almeno 2000 parole)
 # Temi chiave
 # Personaggi/Concetti principali
 # Citazioni (se presenti)
 # Osservazioni sullo stile
+# Sviluppo della trama/argomentazione
 
 FRAMMENTO:
 {text}
 
-RIASSUNTO IN ITALIANO:"""
+RIASSUNTO COMPLETO IN ITALIANO (ALMENO 2000 PAROLE):"""
 
 PROMPT_REDUCE = """Unisci e armonizza i seguenti riassunti parziali del capitolo.
-Rispondi in italiano, producendo un riassunto coerente (600–900 parole).
+Rispondi in italiano, producendo un riassunto coerente e completo.
+
+IMPORTANTE: Il riassunto deve essere di ALMENO 2000 PAROLE e NON deve essere troncato.
 
 RIASSUNTI PARZIALI:
 {summaries}
 
-RIASSUNTO UNIFICATO IN ITALIANO:"""
+RIASSUNTO UNIFICATO IN ITALIANO (ALMENO 2000 PAROLE):"""
 
 PROMPT_GLOBAL = """Genera un riassunto complessivo in italiano basato sui seguenti riassunti dei capitoli:
 

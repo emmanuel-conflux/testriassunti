@@ -8,10 +8,11 @@ APPROCCIO:
 - Sampling strategico: inizio, chunk distribuiti uniformemente, fine
 - Riassunto globale unico (no capitolo per capitolo)
 - Output minimalista (solo Markdown essenziale)
-- Prompt ultra-concisi (max 300 parole per riassunto)
+- Riassunti COMPLETI (almeno 2000 parole per chunk, NON troncati)
 - Niente checkpoint (esecuzione diretta)
 - Chunk enormi (max 32k caratteri)
-- Temperature alta (velocità > qualità)
+- Temperature bassa (qualità e completezza)
+- Context window esteso (128k token)
 
 GESTIONE ERRORI (v2.3.0+):
 - Visualizzazione dettagliata errori (tipo, messaggio, tentativi)
@@ -71,22 +72,26 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 SPEED_CHUNK_SIZE = 32000        # ENORME: 32k caratteri per chunk
 SPEED_MAX_CHUNKS = 5            # Parametro mantenuto per compatibilità (non più utilizzato)
 
-# Prompt ULTRA-CONCISI (velocità massima)
+# Prompt per riassunti completi e dettagliati
 PROMPT_FAST = """Riassumi il seguente testo in italiano.
-Massimo 300 parole, solo concetti chiave.
+
+IMPORTANTE: Il riassunto deve essere di ALMENO 2000 PAROLE e NON deve essere troncato.
+Includi tutti i dettagli importanti, i concetti chiave, e gli sviluppi significativi.
 
 TESTO:
 {text}
 
-RIASSUNTO BREVE IN ITALIANO:"""
+RIASSUNTO COMPLETO IN ITALIANO (ALMENO 2000 PAROLE):"""
 
 PROMPT_GLOBAL_FAST = """Basandoti su questi estratti, genera un riassunto complessivo del libro in italiano.
-Massimo 500 parole.
+
+IMPORTANTE: Il riassunto deve essere di ALMENO 2000 PAROLE e NON deve essere troncato.
+Includi tutti i temi principali, l'evoluzione della trama, e gli elementi significativi.
 
 ESTRATTI:
 {summaries}
 
-RIASSUNTO LIBRO (max 500 parole):"""
+RIASSUNTO LIBRO COMPLETO (ALMENO 2000 PAROLE):"""
 
 
 # ============================================================================
@@ -124,9 +129,9 @@ def call_ollama_fast(prompt: str, model: str = DEFAULT_MODEL, max_retries: int =
         "prompt": prompt,
         "stream": False,
         "options": {
-            "temperature": 0.7,  # Alta per velocità (meno "thinking")
-            "num_ctx": 32000,    # Context ridotto per velocità
-            "num_predict": 500   # Limite output per velocità
+            "temperature": 0.3,  # Bassa per qualità e completezza
+            "num_ctx": 128000    # Context esteso per riassunti completi
+            # num_predict rimosso per permettere riassunti completi senza troncamenti
         }
     }
 
@@ -754,8 +759,9 @@ def main():
     print("  • --sampling-ratio 1.0 = 100% (completo)")
     print("  • --sampling-ratio 0.6 = 60% (bilanciato)")
     print("  • --sampling-ratio 0.3 = 30% (veloce)")
-    print("  • Riassunti ultra-concisi (max 300 parole)")
+    print("  • Riassunti COMPLETI (almeno 2000 parole, NON troncati)")
     print("  • Chunk enormi (32k caratteri)")
+    print("  • Context window esteso (128k token)")
     print("")
     print("NUOVE FUNZIONALITÀ (v2.3.0):")
     print("  • 🔍 Errori dettagliati (tipo, messaggio, tentativi)")

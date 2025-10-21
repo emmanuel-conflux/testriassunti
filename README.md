@@ -17,6 +17,8 @@ Tool CLI in Python per generare riassunti dettagliati di libri (EPUB/PDF) utiliz
 - **Cache e Checkpoint**: Resume automatico in caso di interruzioni
 - **Elaborazione parallela**: Processamento simultaneo di più libri (2-3x più veloce)
 - **Statistiche dettagliate**: Report completo con tempi, capitoli, performance
+- **Modalità Dry-Run**: Preview completa senza elaborazione per verificare file
+- **Architettura modulare**: Codice organizzato in moduli riutilizzabili
 
 ## 🔧 Requisiti
 
@@ -59,16 +61,31 @@ pip install -r requirements.txt
 - `PyPDF2` - Lettura PDF
 - `python-docx` - Generazione Word
 
-## 📁 Struttura Directory
+## 📁 Struttura Progetto
 
 ```
-C:\
-├── dariassumere\          # Input: file EPUB/PDF
+testriassunti/
+├── riassumi_libri.py          # CLI principale
+├── requirements.txt           # Dipendenze Python
+├── config.example.yaml        # Template configurazione
+├── .gitignore                # File da ignorare
+├── README.md                 # Questa documentazione
+│
+├── riassumi_libri_lib/       # Moduli separati
+│   ├── __init__.py
+│   ├── config.py             # Costanti e configurazione
+│   ├── utils.py              # Funzioni utility
+│   ├── validation.py         # Validazione file
+│   └── README_MODULES.md     # Doc architettura modulare
+│
+├── C:\dariassumere\          # Input: file EPUB/PDF
 │   ├── libro1.epub
 │   ├── libro2.pdf
 │   └── ...
 │
-└── riassunti\             # Output: riassunti generati
+└── C:\riassunti\             # Output: riassunti generati
+    ├── .cache/               # Checkpoint (auto-generati)
+    │   └── *.checkpoint.json
     ├── libro1.riassunto.docx
     ├── libro1.riassunto.md
     ├── libro2.riassunto.docx
@@ -104,6 +121,7 @@ Opzioni:
   --verbose              Modalità verbose (log DEBUG)
   --no-cache             Disabilita cache/checkpoint (riavvia da zero)
   --max-workers N        Elaborazione parallela (default: 1, max: 2-3)
+  --dry-run              Preview senza elaborazione (analizza file)
   -h, --help            Mostra questo messaggio
 ```
 
@@ -192,6 +210,15 @@ python riassumi_libri.py
 
 # Per ricominciare da zero (ignora checkpoint)
 python riassumi_libri.py --no-cache
+```
+
+#### Preview con Dry-Run (senza elaborare)
+```bash
+# Analizza file senza elaborarli - mostra capitoli, parole, tempo stimato
+python riassumi_libri.py --dry-run
+
+# Dry-run con configurazione specifica
+python riassumi_libri.py --dry-run --input_dir /path/to/books --min_words 500
 ```
 
 #### Modalità completa con tutte le feature
@@ -475,6 +502,21 @@ pip install -r requirements.txt
 - Conteggio capitoli totali e completati
 - Identificazione libri ripresi da checkpoint
 - Dettaglio per libro in modalità `--verbose`
+
+### Modalità Dry-Run
+- Preview completa senza elaborazione effettiva
+- Analisi file: formato, dimensione, validità
+- Conta capitoli e parole totali per ogni libro
+- Stima tempi elaborazione (sequenziale e parallelo)
+- Identifica file non validi o corrotti
+- Parametro `--dry-run` per attivazione
+
+### Architettura Modulare
+- Codice separato in moduli logici in `riassumi_libri_lib/`
+- Moduli implementati: config, utils, validation
+- Import condizionale con fallback per retrocompatibilità
+- Struttura estendibile per future funzionalità
+- Documentazione completa in `riassumi_libri_lib/README_MODULES.md`
 
 ## 🔮 Sviluppi Futuri
 

@@ -5,6 +5,9 @@ riassumi_libri.py - CLI Tool per Riassunti di Libri via Ollama
 
 Legge file EPUB o PDF, li analizza tramite Ollama locale e genera
 riassunti dettagliati capitolo per capitolo in formato DOCX e Markdown.
+
+NOTA: Questo tool ora utilizza una struttura modulare. Vedi riassumi_libri_lib/
+per i moduli separati (config, utils, validation, ecc.)
 """
 
 import os
@@ -21,6 +24,26 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 # Dependencies
 import requests
 from tqdm import tqdm
+
+# Import da moduli custom
+try:
+    from riassumi_libri_lib.config import (
+        DEFAULT_INPUT_DIR, DEFAULT_OUTPUT_DIR, DEFAULT_MODEL,
+        DEFAULT_MIN_WORDS, DEFAULT_LANGUAGE, OLLAMA_URL,
+        MAX_CHUNK_SIZE, CHUNK_OVERLAP, CACHE_DIR, CHECKPOINT_SUFFIX,
+        PROMPT_MAP, PROMPT_REDUCE, PROMPT_GLOBAL
+    )
+    from riassumi_libri_lib.utils import (
+        ensure_directory, sanitize_filename, count_words, chunk_text
+    )
+    from riassumi_libri_lib.validation import validate_file
+    MODULES_AVAILABLE = True
+except ImportError:
+    # Fallback: se i moduli non sono disponibili, usa le definizioni inline
+    # (per retrocompatibilità)
+    MODULES_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("Moduli riassumi_libri_lib non trovati. Uso definizioni inline.")
 
 # Configurazione logging (iniziale, verrà riconfigurato nel main)
 logger = logging.getLogger(__name__)
@@ -63,26 +86,23 @@ except ImportError:
 
 
 # ============================================================================
-# CONFIGURAZIONE
+# CONFIGURAZIONE (Fallback se moduli non disponibili)
 # ============================================================================
 
-DEFAULT_INPUT_DIR = r"C:\dariassumere"
-DEFAULT_OUTPUT_DIR = r"C:\riassunti"
-DEFAULT_MODEL = "qwen3:8b"
-DEFAULT_MIN_WORDS = 300
-DEFAULT_LANGUAGE = "it"
-OLLAMA_URL = "http://localhost:11434/api/generate"
+# Se i moduli non sono stati importati, definisci le costanti inline
+if not MODULES_AVAILABLE:
+    DEFAULT_INPUT_DIR = r"C:\dariassumere"
+    DEFAULT_OUTPUT_DIR = r"C:\riassunti"
+    DEFAULT_MODEL = "qwen3:8b"
+    DEFAULT_MIN_WORDS = 300
+    DEFAULT_LANGUAGE = "it"
+    OLLAMA_URL = "http://localhost:11434/api/generate"
+    MAX_CHUNK_SIZE = 12000
+    CHUNK_OVERLAP = 600
+    CACHE_DIR = ".cache"
+    CHECKPOINT_SUFFIX = ".checkpoint.json"
 
-# Chunking configuration
-MAX_CHUNK_SIZE = 12000  # caratteri
-CHUNK_OVERLAP = 600     # caratteri
-
-# Cache and checkpoint configuration
-CACHE_DIR = ".cache"
-CHECKPOINT_SUFFIX = ".checkpoint.json"
-
-# Prompt templates
-PROMPT_MAP = """Sei un analista testuale.
+    PROMPT_MAP = """Sei un analista testuale.
 Il testo può essere in italiano o inglese, ma rispondi solo in italiano.
 Crea un riassunto dettagliato del seguente frammento.
 
@@ -97,7 +117,7 @@ FRAMMENTO:
 
 RIASSUNTO IN ITALIANO:"""
 
-PROMPT_REDUCE = """Unisci e armonizza i seguenti riassunti parziali del capitolo.
+    PROMPT_REDUCE = """Unisci e armonizza i seguenti riassunti parziali del capitolo.
 Rispondi in italiano, producendo un riassunto coerente (600–900 parole).
 
 RIASSUNTI PARZIALI:
@@ -105,7 +125,7 @@ RIASSUNTI PARZIALI:
 
 RIASSUNTO UNIFICATO IN ITALIANO:"""
 
-PROMPT_GLOBAL = """Genera un riassunto complessivo in italiano basato sui seguenti riassunti dei capitoli:
+    PROMPT_GLOBAL = """Genera un riassunto complessivo in italiano basato sui seguenti riassunti dei capitoli:
 
 {chapter_summaries}
 
@@ -316,65 +336,45 @@ def delete_checkpoint(book_title: str, output_dir: str) -> bool:
 
 
 # ============================================================================
-# UTILITY FUNCTIONS
+# UTILITY FUNCTIONS (Fallback se moduli non disponibili)
 # ============================================================================
 
-def ensure_directory(path: str) -> None:
-    """Crea la directory se non esiste."""
-    Path(path).mkdir(parents=True, exist_ok=True)
+# Se i moduli non sono stati importati, definisci le funzioni inline
+if not MODULES_AVAILABLE:
+    def ensure_directory(path: str) -> None:
+        """Crea la directory se non esiste."""
+        Path(path).mkdir(parents=True, exist_ok=True)
 
+    def sanitize_filename(filename: str) -> str:
+        """Rimuove caratteri non validi dal nome file."""
+        name = Path(filename).stem
+        name = re.sub(r'[<>:"/\\|?*]', '_', name)
+        return name.strip()
 
-def sanitize_filename(filename: str) -> str:
-    """Rimuove caratteri non validi dal nome file."""
-    # Rimuovi estensione se presente
-    name = Path(filename).stem
-    # Sostituisci caratteri non validi
-    name = re.sub(r'[<>:"/\\|?*]', '_', name)
-    return name.strip()
+    def count_words(text: str) -> int:
+        """Conta le parole in un testo."""
+        return len(text.split())
 
-
-def count_words(text: str) -> int:
-    """Conta le parole in un testo."""
-    return len(text.split())
-
-
-def chunk_text(text: str, max_size: int = MAX_CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
-    """
-    Suddivide il testo in blocchi di dimensione massima con overlap.
-
-    Args:
-        text: Testo da suddividere
-        max_size: Dimensione massima di ogni blocco in caratteri
-        overlap: Numero di caratteri di sovrapposizione tra blocchi
-
-    Returns:
-        Lista di blocchi di testo
-    """
-    if len(text) <= max_size:
-        return [text]
-
-    chunks = []
-    start = 0
-
-    while start < len(text):
-        end = start + max_size
-
-        # Se non siamo alla fine, cerca un punto di divisione naturale
-        if end < len(text):
-            # Cerca ultimo punto, a capo o spazio nel range overlap
-            search_start = max(start, end - overlap)
-            natural_break = max(
-                text.rfind('.', search_start, end),
-                text.rfind('\n', search_start, end),
-                text.rfind(' ', search_start, end)
-            )
-            if natural_break > start:
-                end = natural_break + 1
-
-        chunks.append(text[start:end].strip())
-        start = end - overlap if end < len(text) else end
-
-    return chunks
+    def chunk_text(text: str, max_size: int = MAX_CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
+        """Suddivide il testo in blocchi di dimensione massima con overlap."""
+        if len(text) <= max_size:
+            return [text]
+        chunks = []
+        start = 0
+        while start < len(text):
+            end = start + max_size
+            if end < len(text):
+                search_start = max(start, end - overlap)
+                natural_break = max(
+                    text.rfind('.', search_start, end),
+                    text.rfind('\n', search_start, end),
+                    text.rfind(' ', search_start, end)
+                )
+                if natural_break > start:
+                    end = natural_break + 1
+            chunks.append(text[start:end].strip())
+            start = end - overlap if end < len(text) else end
+        return chunks
 
 
 # ============================================================================
@@ -861,6 +861,75 @@ def write_md_output(book_title: str, chapter_summaries: List[Dict[str, str]],
 
 
 # ============================================================================
+# DRY-RUN ANALYSIS
+# ============================================================================
+
+def analyze_book_dry_run(filepath: str, min_words: int = DEFAULT_MIN_WORDS) -> Dict[str, any]:
+    """
+    Analizza un libro senza elaborarlo (dry-run).
+
+    Args:
+        filepath: Percorso del file
+        min_words: Numero minimo di parole per capitolo
+
+    Returns:
+        Dizionario con info: {
+            'valid': bool,
+            'format': str,
+            'size_mb': float,
+            'chapters': int,
+            'total_words': int,
+            'error': str (se non valido)
+        }
+    """
+    filepath = Path(filepath)
+    extension = filepath.suffix.lower()
+
+    result = {
+        'valid': False,
+        'format': extension,
+        'size_mb': 0.0,
+        'chapters': 0,
+        'total_words': 0,
+        'error': None
+    }
+
+    # Dimensione file
+    try:
+        result['size_mb'] = filepath.stat().st_size / (1024 * 1024)
+    except Exception:
+        result['error'] = "File non trovato"
+        return result
+
+    # Valida file
+    if not validate_file(str(filepath)):
+        result['error'] = "File non valido o corrotto"
+        return result
+
+    # Estrai capitoli
+    try:
+        if extension == '.epub':
+            chapters = extract_chapters_from_epub(str(filepath), min_words)
+        elif extension == '.pdf':
+            chapters = extract_chapters_from_pdf(str(filepath), min_words)
+        else:
+            result['error'] = f"Formato {extension} non supportato"
+            return result
+
+        if chapters:
+            result['chapters'] = len(chapters)
+            result['total_words'] = sum(count_words(ch['text']) for ch in chapters)
+            result['valid'] = True
+        else:
+            result['error'] = "Nessun capitolo estratto"
+
+    except Exception as e:
+        result['error'] = f"Errore estrazione: {str(e)}"
+
+    return result
+
+
+# ============================================================================
 # MAIN PROCESSING
 # ============================================================================
 
@@ -1076,6 +1145,8 @@ Esempi:
                        help='Disabilita cache e checkpoint (riavvia da zero)')
     parser.add_argument('--max-workers', type=int, default=1,
                        help='Numero di libri da elaborare in parallelo (default: 1, max consigliato: 2-3)')
+    parser.add_argument('--dry-run', action='store_true',
+                       help='Mostra cosa verrebbe elaborato senza eseguire (preview)')
 
     args = parser.parse_args()
 
@@ -1147,6 +1218,78 @@ Esempi:
         sys.exit(1)
 
     logger.info(f"Trovati {len(files)} file: {', '.join([f.name for f in files])}")
+
+    # Modalità DRY-RUN
+    if args.dry_run:
+        print(f"\n{'='*60}")
+        print(f"🔍 MODALITÀ DRY-RUN - Preview senza elaborazione")
+        print(f"{'='*60}\n")
+
+        print(f"📂 Directory Input: {input_dir}")
+        print(f"📂 Directory Output: {output_dir}")
+        print(f"🤖 Modello: {model}")
+        print(f"📏 Min parole/capitolo: {min_words}")
+        print(f"⚡ Max workers: {max_workers}")
+        print(f"💾 Cache abilitata: {use_cache}")
+
+        print(f"\n{'='*60}")
+        print(f"📚 ANALISI FILE ({len(files)} file)")
+        print(f"{'='*60}\n")
+
+        total_chapters = 0
+        total_words = 0
+        valid_count = 0
+
+        for idx, filepath in enumerate(files, 1):
+            print(f"[{idx}/{len(files)}] {filepath.name}")
+
+            analysis = analyze_book_dry_run(str(filepath), min_words)
+
+            if analysis['valid']:
+                valid_count += 1
+                total_chapters += analysis['chapters']
+                total_words += analysis['total_words']
+
+                print(f"   ✅ Valido")
+                print(f"   📊 Formato: {analysis['format']}")
+                print(f"   💾 Dimensione: {analysis['size_mb']:.2f} MB")
+                print(f"   📖 Capitoli: {analysis['chapters']}")
+                print(f"   📝 Parole totali: {analysis['total_words']:,}")
+
+                # Stima tempo (approssimativa: 30s per capitolo)
+                estimated_time = analysis['chapters'] * 30
+                print(f"   ⏱️  Tempo stimato: ~{estimated_time//60} min {estimated_time%60} sec")
+            else:
+                print(f"   ❌ Non valido: {analysis['error']}")
+
+            print()
+
+        print(f"{'='*60}")
+        print(f"📊 RIEPILOGO")
+        print(f"{'='*60}")
+        print(f"File totali: {len(files)}")
+        print(f"File validi: {valid_count}")
+        print(f"File non validi: {len(files) - valid_count}")
+        print(f"Capitoli totali: {total_chapters}")
+        print(f"Parole totali: {total_words:,}")
+
+        # Stima tempo totale
+        if max_workers > 1:
+            # Con parallelismo
+            estimated_total = (total_chapters * 30) / max_workers
+        else:
+            estimated_total = total_chapters * 30
+
+        print(f"\n⏱️  Tempo elaborazione stimato:")
+        print(f"   Sequenziale: ~{(total_chapters * 30)//60} min")
+        if max_workers > 1:
+            print(f"   Parallelo ({max_workers} worker): ~{int(estimated_total)//60} min")
+
+        print(f"\n{'='*60}")
+        print(f"ℹ️  Per procedere con l'elaborazione, rimuovi --dry-run")
+        print(f"{'='*60}\n")
+
+        return
 
     # Elabora file
     success_count = 0

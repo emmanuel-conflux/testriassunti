@@ -586,7 +586,7 @@ pip install -r requirements.txt
 #### Limiti
 - **Context window**: 32.000 token (ridotto per velocità)
 - **Temperature**: 0.7 (alta per velocità)
-- **Timeout**: 180 secondi per chiamata Ollama
+- **Timeout**: 420 secondi (7 min) per chiamata Ollama - chunk grandi richiedono più tempo
 - **Max predict**: 500 token per risposta
 
 #### Performance

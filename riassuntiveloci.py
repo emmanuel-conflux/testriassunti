@@ -119,7 +119,9 @@ def call_ollama_fast(prompt: str, model: str = DEFAULT_MODEL) -> Optional[str]:
     }
 
     try:
-        response = requests.post(OLLAMA_URL, json=payload, timeout=180)
+        # Timeout di 7 minuti: chunk grandi (32k) richiedono più tempo
+        # Il vero guadagno di velocità è fare MENO chiamate, non timeout più corti
+        response = requests.post(OLLAMA_URL, json=payload, timeout=420)
         response.raise_for_status()
         result = response.json()
         return result.get("response", "").strip()

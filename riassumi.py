@@ -978,9 +978,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Esempi:
-  python riassumi_libri.py --interactive
-  python riassumi_libri.py --model qwen3:30b --min_words 500
-  python riassumi_libri.py --input_dir /path/to/books --output_dir /path/to/output
+  python riassumi.py --interactive
+  python riassumi.py --model qwen3:30b --min_words 500
+  python riassumi.py --input_dir /path/to/books --output_dir /path/to/output
         """
     )
 

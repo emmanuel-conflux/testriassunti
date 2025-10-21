@@ -20,6 +20,12 @@ GESTIONE ERRORI (v2.3.0+):
 - Salvataggio stato chunk falliti in JSON
 - Recupero selettivo con --retry-failed
 
+TIMEOUT INTELLIGENTI (v2.3.1+):
+- Primo tentativo: timeout breve (30s) per rilevare se Ollama è disponibile
+- Retry successivi: timeout lungo (10 min) per elaborazione effettiva
+- Fallimento rapido se Ollama non è in esecuzione
+- Messaggi di errore chiari con suggerimenti (es. "usa 'ollama serve'")
+
 USO:
   --sampling-ratio 1.0   # 100% del testo (lento ma completo)
   --sampling-ratio 0.6   # 60% del testo (bilanciato)
@@ -60,7 +66,7 @@ except ImportError:
 # CONFIGURAZIONE
 # ============================================================================
 
-VERSION = "2.3.0-ERROR-RECOVERY"
+VERSION = "2.3.1-SMART-TIMEOUT"
 LAST_UPDATE = "2025-10-21"
 
 DEFAULT_INPUT_DIR = os.path.expanduser("~/dariassumere")
@@ -139,9 +145,17 @@ def call_ollama_fast(prompt: str, model: str = DEFAULT_MODEL, max_retries: int =
 
     for attempt in range(max_retries):
         try:
-            # Timeout di 10 minuti: chunk enormi (32k) richiedono tempo sostanziale
-            # Il guadagno di velocità viene da fare MENO chiamate totali (5 vs 20-30)
-            response = requests.post(OLLAMA_URL, json=payload, timeout=600)
+            # TIMEOUT INTELLIGENTI:
+            # - Prima chiamata: timeout breve (30s) per verificare se Ollama è disponibile
+            # - Chiamate successive: timeout lungo (10 min) per l'elaborazione effettiva
+            if attempt == 0:
+                # Prima chiamata: check veloce connessione
+                timeout = 30
+            else:
+                # Retry: timeout lungo per elaborazione
+                timeout = 600
+
+            response = requests.post(OLLAMA_URL, json=payload, timeout=timeout)
             response.raise_for_status()
             result = response.json()
             text = result.get("response", "").strip()
@@ -151,26 +165,39 @@ def call_ollama_fast(prompt: str, model: str = DEFAULT_MODEL, max_retries: int =
                 last_error = {"type": "empty_response", "message": "Risposta vuota da Ollama", "attempts": attempt + 1}
 
         except requests.exceptions.Timeout:
-            last_error = {
-                "type": "timeout",
-                "message": f"Timeout dopo 600 secondi (tentativo {attempt + 1}/{max_retries})",
-                "attempts": attempt + 1
-            }
+            if attempt == 0:
+                # Primo timeout = Ollama probabilmente non disponibile o sovraccarico
+                last_error = {
+                    "type": "connection_timeout",
+                    "message": f"Ollama non risponde dopo {timeout}s - potrebbe non essere in esecuzione (usa 'ollama serve')",
+                    "attempts": attempt + 1
+                }
+            else:
+                # Timeout successivo = elaborazione troppo lenta
+                last_error = {
+                    "type": "processing_timeout",
+                    "message": f"Elaborazione troppo lenta (timeout dopo {timeout}s al tentativo {attempt + 1}/{max_retries})",
+                    "attempts": attempt + 1
+                }
+
             if attempt < max_retries - 1:
                 wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
-                print(f"\n      ⏱️  Timeout, attendo {wait_time}s prima di riprovare... ", end='', flush=True)
+                print(f"\n      ⏱️  Timeout dopo {timeout}s, attendo {wait_time}s prima di riprovare... ", end='', flush=True)
                 time.sleep(wait_time)
 
         except requests.exceptions.ConnectionError as e:
             last_error = {
                 "type": "connection",
-                "message": f"Errore di connessione: {str(e)[:100]}",
+                "message": f"Ollama non raggiungibile - verifica che sia in esecuzione (usa 'ollama serve'): {str(e)[:100]}",
                 "attempts": attempt + 1
             }
             if attempt < max_retries - 1:
                 wait_time = 2 ** attempt
                 print(f"\n      🔌 Errore connessione, riprovo tra {wait_time}s... ", end='', flush=True)
                 time.sleep(wait_time)
+            else:
+                # Ultimo tentativo fallito: aggiungi suggerimento
+                last_error["message"] += " | SUGGERIMENTO: Avvia Ollama con 'ollama serve'"
 
         except requests.exceptions.HTTPError as e:
             last_error = {
@@ -264,6 +291,8 @@ def format_error_details(error_info: Dict) -> str:
     # Emoji per tipo di errore
     emoji_map = {
         "timeout": "⏱️",
+        "connection_timeout": "⏱️",
+        "processing_timeout": "⌛",
         "connection": "🔌",
         "http_error": "🌐",
         "empty_response": "📭",

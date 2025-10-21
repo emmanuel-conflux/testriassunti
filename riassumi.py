@@ -1003,6 +1003,27 @@ Esempi:
 
     # Modalità interattiva
     select_files = False
+
+    # Se non è stato passato --interactive e non sono stati passati parametri custom,
+    # chiedi all'utente se vuole usare la modalità interattiva
+    if not args.interactive:
+        # Controlla se l'utente ha specificato parametri custom
+        has_custom_params = (
+            args.model != DEFAULT_MODEL or
+            args.input_dir != DEFAULT_INPUT_DIR or
+            args.output_dir != DEFAULT_OUTPUT_DIR or
+            args.min_words != DEFAULT_MIN_WORDS or
+            args.chunk_size != DEFAULT_CHUNK_SIZE
+        )
+
+        # Se non ci sono parametri custom, chiedi conferma per modalità interattiva
+        if not has_custom_params:
+            print("💡 Vuoi usare la configurazione interattiva guidata?")
+            print("   (Ti permetterà di personalizzare modello, directory, chunk size, ecc.)")
+            choice = input("\nModalità interattiva? (s/n) [s]: ").strip().lower()
+            if choice in ['', 's', 'si', 'y', 'yes']:
+                args.interactive = True
+
     if args.interactive:
         config = interactive_setup()
         args.model = config['model']

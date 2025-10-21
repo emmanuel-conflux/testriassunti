@@ -277,7 +277,8 @@ def smart_sample_text(text: str, max_chunks: int = SPEED_MAX_CHUNKS,
 # PROCESSING ULTRA-VELOCE
 # ============================================================================
 
-def process_book_fast(filepath: str, output_dir: str, model: str = DEFAULT_MODEL) -> bool:
+def process_book_fast(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
+                     max_chunks: int = SPEED_MAX_CHUNKS) -> bool:
     """
     Elaborazione ULTRA-VELOCE di un libro.
 
@@ -291,6 +292,7 @@ def process_book_fast(filepath: str, output_dir: str, model: str = DEFAULT_MODEL
         filepath: Percorso del file del libro
         output_dir: Directory di output
         model: Modello Ollama da usare
+        max_chunks: Numero massimo di chunk da campionare
 
     Returns:
         True se successo, False altrimenti
@@ -326,7 +328,7 @@ def process_book_fast(filepath: str, output_dir: str, model: str = DEFAULT_MODEL
 
     # Campiona parti strategiche
     sampled_chunks = smart_sample_text(full_text,
-                                       max_chunks=SPEED_MAX_CHUNKS,
+                                       max_chunks=max_chunks,
                                        chunk_size=SPEED_CHUNK_SIZE)
 
     print(f"   📊 Campionati {len(sampled_chunks)} chunk strategici")
@@ -502,18 +504,13 @@ Esempi:
     # Elabora ogni file
     success_count = 0
 
-    # Salva il valore personalizzato se fornito
-    if args.max_chunks != SPEED_MAX_CHUNKS:
-        global SPEED_MAX_CHUNKS
-        SPEED_MAX_CHUNKS = args.max_chunks
-
     for idx, filepath in enumerate(files, 1):
         print(f"\n{'#'*60}")
         print(f"FILE {idx}/{len(files)}")
         print(f"{'#'*60}")
 
         try:
-            if process_book_fast(str(filepath), args.output_dir, args.model):
+            if process_book_fast(str(filepath), args.output_dir, args.model, args.max_chunks):
                 success_count += 1
         except Exception as e:
             print(f"\n❌ Errore: {e}")

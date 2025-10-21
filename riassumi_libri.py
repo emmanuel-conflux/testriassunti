@@ -53,7 +53,7 @@ except ImportError:
 # CONFIGURAZIONE
 # ============================================================================
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 LAST_UPDATE = "2025-10-21"
 
 DEFAULT_INPUT_DIR = os.path.expanduser("~/dariassumere")
@@ -607,13 +607,138 @@ def write_md_output(book_title: str, chapter_summaries: List[Dict[str, str]],
 
 
 # ============================================================================
+# CHECKPOINT SYSTEM
+# ============================================================================
+
+def get_checkpoint_path(book_title: str, output_dir: str) -> str:
+    """
+    Ottiene il percorso del file di checkpoint per un libro.
+
+    Args:
+        book_title: Titolo del libro (sanitized)
+        output_dir: Directory di output
+
+    Returns:
+        Percorso del file di checkpoint
+    """
+    return os.path.join(output_dir, f".checkpoint_{book_title}.json")
+
+
+def save_checkpoint(book_title: str, output_dir: str, chapter_summaries: List[Dict[str, str]],
+                   current_index: int, total_chapters: int, model: str, min_words: int) -> None:
+    """
+    Salva lo stato corrente dell'elaborazione.
+
+    Args:
+        book_title: Titolo del libro
+        output_dir: Directory di output
+        chapter_summaries: Riassunti dei capitoli completati
+        current_index: Indice del capitolo corrente
+        total_chapters: Numero totale di capitoli
+        model: Modello usato
+        min_words: Parole minime per capitolo
+    """
+    checkpoint_path = get_checkpoint_path(book_title, output_dir)
+
+    checkpoint_data = {
+        'book_title': book_title,
+        'timestamp': time.time(),
+        'model': model,
+        'min_words': min_words,
+        'total_chapters': total_chapters,
+        'current_index': current_index,
+        'chapter_summaries': chapter_summaries
+    }
+
+    try:
+        with open(checkpoint_path, 'w', encoding='utf-8') as f:
+            json.dump(checkpoint_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"⚠️  Impossibile salvare checkpoint: {e}")
+
+
+def load_checkpoint(book_title: str, output_dir: str) -> Optional[Dict]:
+    """
+    Carica un checkpoint esistente.
+
+    Args:
+        book_title: Titolo del libro
+        output_dir: Directory di output
+
+    Returns:
+        Dati del checkpoint o None se non esiste
+    """
+    checkpoint_path = get_checkpoint_path(book_title, output_dir)
+
+    if not os.path.exists(checkpoint_path):
+        return None
+
+    try:
+        with open(checkpoint_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"⚠️  Errore nel caricamento checkpoint: {e}")
+        return None
+
+
+def remove_checkpoint(book_title: str, output_dir: str) -> None:
+    """
+    Rimuove il file di checkpoint.
+
+    Args:
+        book_title: Titolo del libro
+        output_dir: Directory di output
+    """
+    checkpoint_path = get_checkpoint_path(book_title, output_dir)
+    try:
+        if os.path.exists(checkpoint_path):
+            os.remove(checkpoint_path)
+    except Exception as e:
+        print(f"⚠️  Impossibile rimuovere checkpoint: {e}")
+
+
+def ask_resume_checkpoint(checkpoint: Dict) -> bool:
+    """
+    Chiede all'utente se vuole riprendere da un checkpoint.
+
+    Args:
+        checkpoint: Dati del checkpoint
+
+    Returns:
+        True se l'utente vuole riprendere, False altrimenti
+    """
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(checkpoint['timestamp']))
+    completed = len(checkpoint['chapter_summaries'])
+    total = checkpoint['total_chapters']
+    percentage = (completed / total * 100) if total > 0 else 0
+
+    print("\n" + "="*70)
+    print("🔄 LAVORO INTERROTTO TROVATO")
+    print("="*70)
+    print(f"Libro: {checkpoint['book_title']}")
+    print(f"Data interruzione: {timestamp}")
+    print(f"Progresso: {completed}/{total} capitoli ({percentage:.1f}%)")
+    print(f"Modello: {checkpoint['model']}")
+    print("="*70)
+
+    while True:
+        choice = input("\nVuoi riprendere da qui? (s/n) [s]: ").strip().lower()
+        if choice in ['', 's', 'si', 'y', 'yes']:
+            return True
+        elif choice in ['n', 'no']:
+            return False
+        else:
+            print("⚠️  Risposta non valida. Inserisci 's' o 'n'")
+
+
+# ============================================================================
 # MAIN PROCESSING
 # ============================================================================
 
 def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
                 min_words: int = DEFAULT_MIN_WORDS) -> bool:
     """
-    Elabora un singolo libro.
+    Elabora un singolo libro con supporto per checkpoint/resume.
 
     Args:
         filepath: Percorso del file del libro
@@ -632,8 +757,32 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
     print(f"📚 Elaborazione: {filepath.name}")
     print(f"{'='*60}\n")
 
+    # Controlla se esiste un checkpoint
+    checkpoint = load_checkpoint(book_title, output_dir)
+    resume_from_checkpoint = False
+    start_index = 0
+    chapter_summaries = []
+
+    if checkpoint:
+        # Verifica che i parametri siano compatibili
+        if checkpoint['model'] == model and checkpoint['min_words'] == min_words:
+            if ask_resume_checkpoint(checkpoint):
+                resume_from_checkpoint = True
+                chapter_summaries = checkpoint['chapter_summaries']
+                start_index = len(chapter_summaries)
+                print(f"\n✅ Ripresa dal capitolo {start_index + 1}\n")
+            else:
+                print("\n🔄 Ricomincio da capo...\n")
+                remove_checkpoint(book_title, output_dir)
+        else:
+            print("\n⚠️  Parametri diversi dal checkpoint, ricomincio da capo...\n")
+            remove_checkpoint(book_title, output_dir)
+
     # [1/4] Estrazione capitoli
-    print(f"[1/4] Estrazione capitoli da {filepath.name}")
+    if not resume_from_checkpoint:
+        print(f"[1/4] Estrazione capitoli da {filepath.name}")
+    else:
+        print(f"[1/4] Ricaricamento struttura capitoli")
 
     if extension == '.epub':
         chapters = extract_chapters_from_epub(str(filepath), min_words)
@@ -649,12 +798,26 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
 
     print(f"✅ Trovati {len(chapters)} capitoli\n")
 
+    # Verifica che il numero di capitoli corrisponda
+    if resume_from_checkpoint and checkpoint['total_chapters'] != len(chapters):
+        print("⚠️  Numero di capitoli diverso dal checkpoint, ricomincio da capo...\n")
+        remove_checkpoint(book_title, output_dir)
+        chapter_summaries = []
+        start_index = 0
+        resume_from_checkpoint = False
+
     # [2/4] Riassunto capitoli
     print(f"[2/4] Riassunto capitoli")
-    chapter_summaries = []
 
-    with tqdm(total=len(chapters), desc="Elaborazione capitoli", unit="cap") as pbar:
+    if resume_from_checkpoint:
+        print(f"   ⏭️  Saltati {start_index} capitoli già elaborati\n")
+
+    with tqdm(total=len(chapters), desc="Elaborazione capitoli", unit="cap", initial=start_index) as pbar:
         for idx, chapter in enumerate(chapters, 1):
+            # Salta i capitoli già elaborati
+            if idx <= start_index:
+                continue
+
             print(f"\n   📖 Capitolo {idx}/{len(chapters)}: {chapter['title']}")
 
             summary = summarize_chapter(chapter['text'], chapter['title'], model)
@@ -665,6 +828,10 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
                     'summary': summary
                 })
                 print(f"   ✅ Completato")
+
+                # Salva checkpoint dopo ogni capitolo completato
+                save_checkpoint(book_title, output_dir, chapter_summaries,
+                               idx, len(chapters), model, min_words)
             else:
                 print(f"   ⚠️  Saltato per errore")
 
@@ -672,6 +839,7 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
 
     if not chapter_summaries:
         print("\n❌ Nessun riassunto generato")
+        remove_checkpoint(book_title, output_dir)
         return False
 
     # [3/4] Riassunto globale
@@ -697,6 +865,10 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
         print(f"✅ DOCX: {docx_path}")
     if md_ok:
         print(f"✅ MD: {md_path}")
+
+    # Rimuovi checkpoint se completato con successo
+    if docx_ok or md_ok:
+        remove_checkpoint(book_title, output_dir)
 
     return docx_ok or md_ok
 

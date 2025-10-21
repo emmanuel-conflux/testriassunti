@@ -22,7 +22,12 @@ language: it
 # Modalità verbose per log dettagliati (true/false)
 verbose: false
 
+# Numero di worker per elaborazione parallela (1-3)
+# max_workers: 2
+
 # Note:
 # - Gli argomenti da riga di comando hanno priorità su questo file
 # - Puoi sovrascrivere qualsiasi valore con --parametro
 # - Esempio: python riassumi_libri.py --config config.yaml --model qwen3:30b
+# - Cache e checkpoint sono abilitati di default, usa --no-cache per disabilitare
+# - Elaborazione parallela: max_workers > 1 (consigliato 2-3 per performance ottimali)

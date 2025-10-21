@@ -14,6 +14,9 @@ Tool CLI in Python per generare riassunti dettagliati di libri (EPUB/PDF) utiliz
 - **Configurabile**: Parametri CLI e file di configurazione
 - **Logging strutturato**: Log su file e console con livelli personalizzabili
 - **Validazione robusta**: Verifica automatica integrità file prima dell'elaborazione
+- **Cache e Checkpoint**: Resume automatico in caso di interruzioni
+- **Elaborazione parallela**: Processamento simultaneo di più libri (2-3x più veloce)
+- **Statistiche dettagliate**: Report completo con tempi, capitoli, performance
 
 ## 🔧 Requisiti
 
@@ -99,6 +102,8 @@ Opzioni:
   --language LANG        Lingua output (default: it)
   --log-file FILE        File di log (es: riassunti.log)
   --verbose              Modalità verbose (log DEBUG)
+  --no-cache             Disabilita cache/checkpoint (riavvia da zero)
+  --max-workers N        Elaborazione parallela (default: 1, max: 2-3)
   -h, --help            Mostra questo messaggio
 ```
 
@@ -168,6 +173,34 @@ python riassumi_libri.py --config config.yaml
 
 # Sovrascrivi un parametro specifico
 python riassumi_libri.py --config config.yaml --model qwen3:30b
+```
+
+#### Elaborazione parallela (2-3x più veloce)
+```bash
+# Elabora 2 libri contemporaneamente
+python riassumi_libri.py --max-workers 2
+
+# Massima velocità (3 worker)
+python riassumi_libri.py --max-workers 3
+```
+
+#### Resume automatico dopo interruzione
+```bash
+# Se si interrompe, riavviare con lo stesso comando
+# Il sistema riprenderà dall'ultimo checkpoint automaticamente
+python riassumi_libri.py
+
+# Per ricominciare da zero (ignora checkpoint)
+python riassumi_libri.py --no-cache
+```
+
+#### Modalità completa con tutte le feature
+```bash
+python riassumi_libri.py \
+  --config config.yaml \
+  --max-workers 2 \
+  --log-file riassunti.log \
+  --verbose
 ```
 
 ## 📖 Come Funziona
@@ -422,16 +455,38 @@ pip install -r requirements.txt
 - Validazione PDF (pagine, leggibilità)
 - Skip automatico file corrotti con log chiaro
 
+### Cache e Checkpoint System
+- Salvataggio automatico progressi dopo ogni capitolo
+- Resume intelligente in caso di interruzioni (crash, Ctrl+C, ecc.)
+- Checkpoint salvati in `.cache/` con timestamp
+- Parametro `--no-cache` per forzare riavvio da zero
+- Eliminazione automatica checkpoint completati
+
+### Elaborazione Parallela
+- Supporto multiprocessing per più libri contemporaneamente
+- Parametro `--max-workers` per controllare parallelismo (1-3)
+- 2-3x più veloce con 2-3 worker su più libri
+- Ogni libro usa un processo dedicato
+- Compatibile con checkpoint per sicurezza
+
+### Statistiche e Tracking
+- Report finale dettagliato con metriche complete
+- Tracking tempi: totale, medio per libro, medio per capitolo
+- Conteggio capitoli totali e completati
+- Identificazione libri ripresi da checkpoint
+- Dettaglio per libro in modalità `--verbose`
+
 ## 🔮 Sviluppi Futuri
 
-- [ ] GUI con Tkinter
+- [ ] GUI con Tkinter o web interface
 - [ ] Supporto altri formati (MOBI, AZW3, TXT)
-- [ ] Cache riassunti parziali con resume
-- [ ] Elaborazione parallela di più libri
-- [ ] Esportazione in altri formati (HTML, LaTeX)
-- [ ] Configurazione prompt personalizzabili
+- [ ] Esportazione in altri formati (HTML, LaTeX, ePub annotato)
+- [ ] Configurazione prompt personalizzabili via file
 - [ ] Supporto multi-lingua per output
-- [ ] Statistiche dettagliate post-elaborazione
+- [ ] Integrazione con altri LLM (OpenAI, Anthropic, ecc.)
+- [ ] Generazione indici analitici e mappe concettuali
+- [ ] Sistema di rating qualità riassunti
+- [ ] API REST per integrazione con altre applicazioni
 
 ## 📄 Licenza
 

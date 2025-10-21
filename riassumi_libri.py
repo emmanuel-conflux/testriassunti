@@ -16,6 +16,7 @@ import json
 import logging
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # Dependencies
 import requests
@@ -75,6 +76,10 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 # Chunking configuration
 MAX_CHUNK_SIZE = 12000  # caratteri
 CHUNK_OVERLAP = 600     # caratteri
+
+# Cache and checkpoint configuration
+CACHE_DIR = ".cache"
+CHECKPOINT_SUFFIX = ".checkpoint.json"
 
 # Prompt templates
 PROMPT_MAP = """Sei un analista testuale.
@@ -197,6 +202,117 @@ def load_config(config_path: str) -> Dict[str, any]:
     except Exception as e:
         logger.error(f"Errore nel caricamento configurazione: {e}")
         return {}
+
+
+# ============================================================================
+# CACHE AND CHECKPOINT
+# ============================================================================
+
+def get_checkpoint_path(book_title: str, output_dir: str) -> Path:
+    """
+    Genera il percorso del file di checkpoint per un libro.
+
+    Args:
+        book_title: Titolo del libro (sanitized)
+        output_dir: Directory di output
+
+    Returns:
+        Path del file di checkpoint
+    """
+    cache_dir = Path(output_dir) / CACHE_DIR
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"{book_title}{CHECKPOINT_SUFFIX}"
+
+
+def save_checkpoint(book_title: str, output_dir: str, chapter_summaries: List[Dict[str, str]],
+                   current_chapter: int, total_chapters: int) -> bool:
+    """
+    Salva un checkpoint dell'elaborazione.
+
+    Args:
+        book_title: Titolo del libro
+        output_dir: Directory di output
+        chapter_summaries: Lista dei riassunti completati
+        current_chapter: Indice del capitolo corrente
+        total_chapters: Numero totale di capitoli
+
+    Returns:
+        True se il salvataggio è riuscito
+    """
+    try:
+        checkpoint_path = get_checkpoint_path(book_title, output_dir)
+
+        checkpoint_data = {
+            'book_title': book_title,
+            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'current_chapter': current_chapter,
+            'total_chapters': total_chapters,
+            'chapter_summaries': chapter_summaries
+        }
+
+        with open(checkpoint_path, 'w', encoding='utf-8') as f:
+            json.dump(checkpoint_data, f, ensure_ascii=False, indent=2)
+
+        logger.debug(f"Checkpoint salvato: {checkpoint_path}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Errore nel salvataggio checkpoint: {e}")
+        return False
+
+
+def load_checkpoint(book_title: str, output_dir: str) -> Optional[Dict]:
+    """
+    Carica un checkpoint esistente.
+
+    Args:
+        book_title: Titolo del libro
+        output_dir: Directory di output
+
+    Returns:
+        Dizionario con i dati del checkpoint o None se non esiste
+    """
+    try:
+        checkpoint_path = get_checkpoint_path(book_title, output_dir)
+
+        if not checkpoint_path.exists():
+            logger.debug(f"Nessun checkpoint trovato per {book_title}")
+            return None
+
+        with open(checkpoint_path, 'r', encoding='utf-8') as f:
+            checkpoint_data = json.load(f)
+
+        logger.info(f"Checkpoint caricato: {checkpoint_data['current_chapter']}/{checkpoint_data['total_chapters']} capitoli completati")
+        return checkpoint_data
+
+    except Exception as e:
+        logger.error(f"Errore nel caricamento checkpoint: {e}")
+        return None
+
+
+def delete_checkpoint(book_title: str, output_dir: str) -> bool:
+    """
+    Elimina un checkpoint completato.
+
+    Args:
+        book_title: Titolo del libro
+        output_dir: Directory di output
+
+    Returns:
+        True se l'eliminazione è riuscita
+    """
+    try:
+        checkpoint_path = get_checkpoint_path(book_title, output_dir)
+
+        if checkpoint_path.exists():
+            checkpoint_path.unlink()
+            logger.debug(f"Checkpoint eliminato: {checkpoint_path}")
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Errore nell'eliminazione checkpoint: {e}")
+        return False
 
 
 # ============================================================================
@@ -749,7 +865,7 @@ def write_md_output(book_title: str, chapter_summaries: List[Dict[str, str]],
 # ============================================================================
 
 def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
-                min_words: int = DEFAULT_MIN_WORDS) -> bool:
+                min_words: int = DEFAULT_MIN_WORDS, use_cache: bool = True) -> Dict[str, any]:
     """
     Elabora un singolo libro.
 
@@ -758,13 +874,33 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
         output_dir: Directory di output
         model: Modello Ollama da usare
         min_words: Numero minimo di parole per capitolo
+        use_cache: Se True, usa checkpoint per resume
 
     Returns:
-        True se successo, False altrimenti
+        Dizionario con statistiche: {
+            'success': bool,
+            'book_title': str,
+            'chapters': int,
+            'chapters_completed': int,
+            'time_seconds': float,
+            'resumed_from_checkpoint': bool
+        }
     """
+    start_time = time.time()
+
     filepath = Path(filepath)
     extension = filepath.suffix.lower()
     book_title = sanitize_filename(filepath.name)
+
+    # Inizializza stats
+    stats = {
+        'success': False,
+        'book_title': book_title,
+        'chapters': 0,
+        'chapters_completed': 0,
+        'time_seconds': 0.0,
+        'resumed_from_checkpoint': False
+    }
 
     print(f"\n{'='*60}")
     print(f"📚 Elaborazione: {filepath.name}")
@@ -774,7 +910,8 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
     logger.info(f"Validazione file: {filepath.name}")
     if not validate_file(str(filepath)):
         logger.error(f"File non valido, saltato: {filepath.name}")
-        return False
+        stats['time_seconds'] = time.time() - start_time
+        return stats
 
     # [1/4] Estrazione capitoli
     print(f"[1/4] Estrazione capitoli da {filepath.name}")
@@ -785,20 +922,40 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
         chapters = extract_chapters_from_pdf(str(filepath), min_words)
     else:
         logger.error(f"Formato non supportato: {extension}")
-        return False
+        stats['time_seconds'] = time.time() - start_time
+        return stats
 
     if not chapters:
         logger.error("Nessun capitolo estratto")
-        return False
+        stats['time_seconds'] = time.time() - start_time
+        return stats
 
     logger.info(f"Trovati {len(chapters)} capitoli")
+    stats['chapters'] = len(chapters)
+
+    # Carica checkpoint se esiste
+    checkpoint = None
+    start_from = 0
+    chapter_summaries = []
+
+    if use_cache:
+        checkpoint = load_checkpoint(book_title, output_dir)
+        if checkpoint:
+            chapter_summaries = checkpoint.get('chapter_summaries', [])
+            start_from = checkpoint.get('current_chapter', 0)
+            stats['resumed_from_checkpoint'] = True
+            stats['chapters_completed'] = start_from
+            logger.info(f"Ripresa da checkpoint: {start_from}/{len(chapters)} capitoli già completati")
 
     # [2/4] Riassunto capitoli
     print(f"[2/4] Riassunto capitoli")
-    chapter_summaries = []
 
-    with tqdm(total=len(chapters), desc="Elaborazione capitoli", unit="cap") as pbar:
+    with tqdm(total=len(chapters), initial=start_from, desc="Elaborazione capitoli", unit="cap") as pbar:
         for idx, chapter in enumerate(chapters, 1):
+            # Skip capitoli già elaborati
+            if idx <= start_from:
+                continue
+
             print(f"\n   📖 Capitolo {idx}/{len(chapters)}: {chapter['title']}")
 
             summary = summarize_chapter(chapter['text'], chapter['title'], model)
@@ -808,7 +965,12 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
                     'title': chapter['title'],
                     'summary': summary
                 })
+                stats['chapters_completed'] = idx
                 logger.info(f"Capitolo {idx} completato")
+
+                # Salva checkpoint dopo ogni capitolo
+                if use_cache:
+                    save_checkpoint(book_title, output_dir, chapter_summaries, idx, len(chapters))
             else:
                 logger.warning(f"Capitolo {idx} saltato per errore")
 
@@ -816,7 +978,8 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
 
     if not chapter_summaries:
         logger.error("Nessun riassunto generato")
-        return False
+        stats['time_seconds'] = time.time() - start_time
+        return stats
 
     # [3/4] Riassunto globale
     print(f"\n[3/4] Generazione riassunto complessivo")
@@ -842,7 +1005,42 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
     if md_ok:
         logger.info(f"MD salvato: {md_path}")
 
-    return docx_ok or md_ok
+    # Elimina checkpoint se tutto è andato bene
+    if (docx_ok or md_ok) and use_cache:
+        delete_checkpoint(book_title, output_dir)
+
+    # Aggiorna statistiche finali
+    stats['success'] = docx_ok or md_ok
+    stats['time_seconds'] = time.time() - start_time
+
+    return stats
+
+
+def process_book_wrapper(args_tuple):
+    """
+    Wrapper per process_book per elaborazione parallela.
+
+    Args:
+        args_tuple: Tupla con (filepath, output_dir, model, min_words, use_cache)
+
+    Returns:
+        Tupla (filepath, stats_dict)
+    """
+    filepath, output_dir, model, min_words, use_cache = args_tuple
+    try:
+        stats = process_book(filepath, output_dir, model, min_words, use_cache)
+        return (filepath, stats)
+    except Exception as e:
+        logger.error(f"Errore nell'elaborazione {filepath}: {e}")
+        # Restituisci stats vuote in caso di errore
+        return (filepath, {
+            'success': False,
+            'book_title': Path(filepath).stem,
+            'chapters': 0,
+            'chapters_completed': 0,
+            'time_seconds': 0.0,
+            'resumed_from_checkpoint': False
+        })
 
 
 def main():
@@ -874,6 +1072,10 @@ Esempi:
                        help='File di log (opzionale, es: riassunti.log)')
     parser.add_argument('--verbose', action='store_true',
                        help='Mostra log dettagliati (DEBUG level)')
+    parser.add_argument('--no-cache', action='store_true',
+                       help='Disabilita cache e checkpoint (riavvia da zero)')
+    parser.add_argument('--max-workers', type=int, default=1,
+                       help='Numero di libri da elaborare in parallelo (default: 1, max consigliato: 2-3)')
 
     args = parser.parse_args()
 
@@ -897,6 +1099,8 @@ Esempi:
     language = get_value(args.language, 'language', DEFAULT_LANGUAGE)
     log_file = get_value(args.log_file, 'log_file', None)
     verbose = args.verbose or config.get('verbose', False)
+    use_cache = not args.no_cache  # Inverso: --no-cache disabilita
+    max_workers = get_value(args.max_workers, 'max_workers', 1)
 
     # Configura logging
     setup_logging(log_file=log_file, verbose=verbose)
@@ -944,27 +1148,93 @@ Esempi:
 
     logger.info(f"Trovati {len(files)} file: {', '.join([f.name for f in files])}")
 
-    # Elabora ogni file
+    # Elabora file
     success_count = 0
+    all_stats = []
+    total_start_time = time.time()
 
-    for idx, filepath in enumerate(files, 1):
-        print(f"\n{'#'*60}")
-        print(f"FILE {idx}/{len(files)}")
-        print(f"{'#'*60}")
+    if max_workers > 1:
+        # Elaborazione parallela
+        logger.info(f"Elaborazione parallela con {max_workers} worker")
 
-        try:
-            if process_book(str(filepath), output_dir, model, min_words):
-                success_count += 1
-        except Exception as e:
-            logger.error(f"Errore nell'elaborazione: {e}", exc_info=verbose)
-            continue
+        # Prepara argomenti per ogni file
+        tasks = [(str(f), output_dir, model, min_words, use_cache) for f in files]
+
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Sottometti tutti i task
+            futures = {executor.submit(process_book_wrapper, task): task[0] for task in tasks}
+
+            # Processa i risultati man mano che completano
+            for idx, future in enumerate(as_completed(futures), 1):
+                filepath = futures[future]
+                try:
+                    result_filepath, stats = future.result()
+                    all_stats.append(stats)
+                    if stats['success']:
+                        success_count += 1
+                        logger.info(f"[{idx}/{len(files)}] Completato: {Path(result_filepath).name} ({stats['time_seconds']:.1f}s)")
+                    else:
+                        logger.warning(f"[{idx}/{len(files)}] Fallito: {Path(result_filepath).name}")
+                except Exception as e:
+                    logger.error(f"Errore nell'elaborazione {Path(filepath).name}: {e}", exc_info=verbose)
+
+    else:
+        # Elaborazione sequenziale
+        for idx, filepath in enumerate(files, 1):
+            print(f"\n{'#'*60}")
+            print(f"FILE {idx}/{len(files)}")
+            print(f"{'#'*60}")
+
+            try:
+                stats = process_book(str(filepath), output_dir, model, min_words, use_cache)
+                all_stats.append(stats)
+                if stats['success']:
+                    success_count += 1
+            except Exception as e:
+                logger.error(f"Errore nell'elaborazione: {e}", exc_info=verbose)
+                continue
+
+    total_time = time.time() - total_start_time
 
     # Riepilogo finale
     print(f"\n{'='*60}")
     print(f"✅ OPERAZIONE COMPLETATA")
     print(f"{'='*60}")
-    logger.info(f"File elaborati: {success_count}/{len(files)}")
-    logger.info(f"Output salvati in: {output_dir}")
+
+    # Statistiche aggregate
+    total_chapters = sum(s['chapters'] for s in all_stats)
+    total_chapters_completed = sum(s['chapters_completed'] for s in all_stats)
+    resumed_count = sum(1 for s in all_stats if s['resumed_from_checkpoint'])
+
+    print(f"\n📊 STATISTICHE:")
+    print(f"   File elaborati: {success_count}/{len(files)}")
+    if len(files) != success_count:
+        print(f"   File falliti: {len(files) - success_count}")
+    print(f"   Capitoli totali: {total_chapters}")
+    print(f"   Capitoli completati: {total_chapters_completed}")
+    if resumed_count > 0:
+        print(f"   Ripresi da checkpoint: {resumed_count}")
+
+    print(f"\n⏱️  TEMPI:")
+    print(f"   Tempo totale: {total_time:.1f}s ({total_time/60:.1f} min)")
+    if all_stats:
+        avg_time = sum(s['time_seconds'] for s in all_stats if s['success']) / max(success_count, 1)
+        print(f"   Tempo medio per libro: {avg_time:.1f}s")
+    if total_chapters_completed > 0:
+        avg_chapter_time = total_time / total_chapters_completed
+        print(f"   Tempo medio per capitolo: {avg_chapter_time:.1f}s")
+
+    print(f"\n💾 OUTPUT:")
+    print(f"   Directory: {output_dir}")
+
+    # Dettaglio per ogni libro (se verbose)
+    if verbose and all_stats:
+        print(f"\n📚 DETTAGLIO LIBRI:")
+        for s in all_stats:
+            status = "✅" if s['success'] else "❌"
+            resumed = " (resume)" if s['resumed_from_checkpoint'] else ""
+            print(f"   {status} {s['book_title']}: {s['chapters_completed']}/{s['chapters']} cap, {s['time_seconds']:.1f}s{resumed}")
+
     print("="*60 + "\n")
 
 

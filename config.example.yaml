@@ -1,0 +1,28 @@
+# File di configurazione di esempio per riassumi_libri.py
+# Copia questo file in config.yaml e personalizza i valori
+
+# Modello Ollama da usare
+model: qwen3:8b
+
+# Directory dove cercare i libri da elaborare
+input_dir: C:\dariassumere
+
+# Directory dove salvare i riassunti
+output_dir: C:\riassunti
+
+# Numero minimo di parole per considerare un capitolo valido
+min_words: 300
+
+# Lingua di output (attualmente solo 'it' supportata)
+language: it
+
+# File di log (opzionale, commentato per default)
+# log_file: riassunti.log
+
+# Modalità verbose per log dettagliati (true/false)
+verbose: false
+
+# Note:
+# - Gli argomenti da riga di comando hanno priorità su questo file
+# - Puoi sovrascrivere qualsiasi valore con --parametro
+# - Esempio: python riassumi_libri.py --config config.yaml --model qwen3:30b

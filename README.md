@@ -11,7 +11,9 @@ Tool CLI in Python per generare riassunti dettagliati di libri (EPUB/PDF) utiliz
 - **MAP-REDUCE**: Gestione intelligente di testi lunghi
 - **Multilingua**: Output sempre in italiano, anche per libri in altre lingue
 - **Progress tracking**: Barra di progresso e logging dettagliato
-- **Configurabile**: Parametri CLI personalizzabili
+- **Configurabile**: Parametri CLI e file di configurazione
+- **Logging strutturato**: Log su file e console con livelli personalizzabili
+- **Validazione robusta**: Verifica automatica integrità file prima dell'elaborazione
 
 ## 🔧 Requisiti
 
@@ -89,13 +91,39 @@ Questo comando:
 python riassumi_libri.py [opzioni]
 
 Opzioni:
+  --config FILE          File di configurazione YAML/JSON
   --model MODEL          Modello Ollama (default: qwen3:8b)
   --input_dir DIR        Directory input (default: C:\dariassumere)
   --output_dir DIR       Directory output (default: C:\riassunti)
   --min_words NUM        Parole minime per capitolo (default: 300)
   --language LANG        Lingua output (default: it)
+  --log-file FILE        File di log (es: riassunti.log)
+  --verbose              Modalità verbose (log DEBUG)
   -h, --help            Mostra questo messaggio
 ```
+
+### File di Configurazione
+
+Puoi usare un file YAML o JSON per configurare i parametri invece di passarli da CLI.
+
+**Esempio config.yaml:**
+```yaml
+model: qwen3:8b
+input_dir: C:\dariassumere
+output_dir: C:\riassunti
+min_words: 300
+log_file: riassunti.log
+verbose: false
+```
+
+**Uso:**
+```bash
+python riassumi_libri.py --config config.yaml
+```
+
+**Priorità dei parametri:** CLI args > config file > default values
+
+Copia `config.example.yaml` in `config.yaml` e personalizza i valori.
 
 ### Esempi
 
@@ -121,6 +149,25 @@ python riassumi_libri.py \
   --input_dir "D:\Libri" \
   --output_dir "D:\Riassunti" \
   --min_words 400
+```
+
+#### Con logging su file
+```bash
+python riassumi_libri.py --log-file riassunti.log
+```
+
+#### Modalità verbose per debugging
+```bash
+python riassumi_libri.py --verbose --log-file debug.log
+```
+
+#### Usando file di configurazione
+```bash
+# Crea config.yaml con le tue impostazioni
+python riassumi_libri.py --config config.yaml
+
+# Sovrascrivi un parametro specifico
+python riassumi_libri.py --config config.yaml --model qwen3:30b
 ```
 
 ## 📖 Come Funziona
@@ -354,15 +401,37 @@ pip install -r requirements.txt
 - **PDF lungo** (20+ sezioni): ~15-30 minuti
 - **Dipende da**: CPU, RAM, modello scelto, lunghezza libro
 
+## ⚡ Ottimizzazioni Recenti
+
+### Logging Strutturato
+- Sistema di logging professionale con livelli (INFO, WARNING, ERROR, DEBUG)
+- Output su console e file simultaneo
+- Formato timestamp per tracciabilità
+- Modalità verbose per debugging dettagliato
+
+### File di Configurazione
+- Supporto YAML e JSON
+- Priorità intelligente: CLI > config > defaults
+- File di esempio (`config.example.yaml`) incluso
+- Riutilizzo facile delle configurazioni preferite
+
+### Validazione File Robusta
+- Verifica automatica integrità file prima dell'elaborazione
+- Controllo dimensione minima (1KB)
+- Validazione formato EPUB (spine, struttura)
+- Validazione PDF (pagine, leggibilità)
+- Skip automatico file corrotti con log chiaro
+
 ## 🔮 Sviluppi Futuri
 
 - [ ] GUI con Tkinter
 - [ ] Supporto altri formati (MOBI, AZW3, TXT)
-- [ ] Cache riassunti parziali
+- [ ] Cache riassunti parziali con resume
 - [ ] Elaborazione parallela di più libri
 - [ ] Esportazione in altri formati (HTML, LaTeX)
 - [ ] Configurazione prompt personalizzabili
 - [ ] Supporto multi-lingua per output
+- [ ] Statistiche dettagliate post-elaborazione
 
 ## 📄 Licenza
 

@@ -13,12 +13,24 @@ import argparse
 import time
 import re
 import json
+import logging
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
 # Dependencies
 import requests
 from tqdm import tqdm
+
+# Configurazione logging (iniziale, verrà riconfigurato nel main)
+logger = logging.getLogger(__name__)
+
+# YAML support (optional)
+try:
+    import yaml
+    YAML_SUPPORT = True
+except ImportError:
+    YAML_SUPPORT = False
+    logger.debug("PyYAML non disponibile. Supporto config YAML disabilitato.")
 
 # EPUB handling
 try:
@@ -28,7 +40,7 @@ try:
     EPUB_SUPPORT = True
 except ImportError:
     EPUB_SUPPORT = False
-    print("⚠️  ebooklib o BeautifulSoup non disponibili. Supporto EPUB disabilitato.")
+    logger.warning("ebooklib o BeautifulSoup non disponibili. Supporto EPUB disabilitato.")
 
 # PDF handling
 try:
@@ -36,7 +48,7 @@ try:
     PDF_SUPPORT = True
 except ImportError:
     PDF_SUPPORT = False
-    print("⚠️  PyPDF2 non disponibile. Supporto PDF disabilitato.")
+    logger.warning("PyPDF2 non disponibile. Supporto PDF disabilitato.")
 
 # DOCX generation
 try:
@@ -46,7 +58,7 @@ try:
     DOCX_SUPPORT = True
 except ImportError:
     DOCX_SUPPORT = False
-    print("⚠️  python-docx non disponibile. Generazione DOCX disabilitata.")
+    logger.warning("python-docx non disponibile. Generazione DOCX disabilitata.")
 
 
 # ============================================================================
@@ -101,6 +113,90 @@ Produce un documento strutturato con:
 # Sintesi finale
 
 RIASSUNTO COMPLESSIVO IN ITALIANO:"""
+
+
+# ============================================================================
+# LOGGING SETUP
+# ============================================================================
+
+def setup_logging(log_file: Optional[str] = None, verbose: bool = False) -> None:
+    """
+    Configura il sistema di logging.
+
+    Args:
+        log_file: Percorso del file di log (opzionale)
+        verbose: Se True, mostra messaggi DEBUG
+    """
+    level = logging.DEBUG if verbose else logging.INFO
+
+    # Formato dei log
+    log_format = '%(asctime)s - %(levelname)s - %(message)s'
+    date_format = '%Y-%m-%d %H:%M:%S'
+
+    handlers = []
+
+    # Handler console
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(level)
+    console_handler.setFormatter(logging.Formatter(log_format, date_format))
+    handlers.append(console_handler)
+
+    # Handler file (se specificato)
+    if log_file:
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)  # File sempre dettagliato
+        file_handler.setFormatter(logging.Formatter(log_format, date_format))
+        handlers.append(file_handler)
+
+    # Configura logger root
+    logging.basicConfig(
+        level=level,
+        format=log_format,
+        datefmt=date_format,
+        handlers=handlers,
+        force=True
+    )
+
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+def load_config(config_path: str) -> Dict[str, any]:
+    """
+    Carica configurazione da file YAML o JSON.
+
+    Args:
+        config_path: Percorso del file di configurazione
+
+    Returns:
+        Dizionario con la configurazione
+    """
+    config_file = Path(config_path)
+
+    if not config_file.exists():
+        logger.error(f"File di configurazione non trovato: {config_path}")
+        return {}
+
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            # Prova YAML prima (supporta anche JSON)
+            if YAML_SUPPORT and config_file.suffix in ['.yaml', '.yml']:
+                config = yaml.safe_load(f)
+                logger.info(f"Configurazione caricata da {config_path}")
+                return config or {}
+            # Altrimenti JSON
+            elif config_file.suffix == '.json':
+                config = json.load(f)
+                logger.info(f"Configurazione caricata da {config_path}")
+                return config or {}
+            else:
+                logger.warning(f"Formato file non riconosciuto: {config_file.suffix}. Usa .yaml, .yml o .json")
+                return {}
+
+    except Exception as e:
+        logger.error(f"Errore nel caricamento configurazione: {e}")
+        return {}
 
 
 # ============================================================================
@@ -204,17 +300,125 @@ def call_ollama(prompt: str, model: str = DEFAULT_MODEL, temperature: float = 0.
         except requests.exceptions.RequestException as e:
             if attempt < max_retries - 1:
                 wait_time = 2 ** (attempt + 1)  # 2s, 4s, 8s
-                print(f"⚠️  Tentativo {attempt + 1} fallito: {e}")
-                print(f"   Riprovo tra {wait_time} secondi...")
+                logger.warning(f"Tentativo {attempt + 1} fallito: {e}")
+                logger.info(f"Riprovo tra {wait_time} secondi...")
                 time.sleep(wait_time)
             else:
-                print(f"❌ Errore Ollama dopo {max_retries} tentativi: {e}")
+                logger.error(f"Errore Ollama dopo {max_retries} tentativi: {e}")
                 return None
         except Exception as e:
-            print(f"❌ Errore imprevisto: {e}")
+            logger.error(f"Errore imprevisto: {e}")
             return None
 
     return None
+
+
+# ============================================================================
+# FILE VALIDATION
+# ============================================================================
+
+def validate_epub(filepath: str) -> bool:
+    """
+    Valida che un file EPUB sia leggibile e non corrotto.
+
+    Args:
+        filepath: Percorso del file EPUB
+
+    Returns:
+        True se il file è valido, False altrimenti
+    """
+    if not EPUB_SUPPORT:
+        logger.error("Supporto EPUB non disponibile")
+        return False
+
+    try:
+        # Tenta di aprire e leggere il file
+        book = epub.read_epub(filepath)
+
+        # Verifica che ci siano item nello spine
+        if not book.spine or len(book.spine) == 0:
+            logger.error(f"EPUB vuoto o malformato: {filepath}")
+            return False
+
+        logger.debug(f"EPUB valido: {filepath}")
+        return True
+
+    except Exception as e:
+        logger.error(f"EPUB non valido ({filepath}): {e}")
+        return False
+
+
+def validate_pdf(filepath: str) -> bool:
+    """
+    Valida che un file PDF sia leggibile e non corrotto.
+
+    Args:
+        filepath: Percorso del file PDF
+
+    Returns:
+        True se il file è valido, False altrimenti
+    """
+    if not PDF_SUPPORT:
+        logger.error("Supporto PDF non disponibile")
+        return False
+
+    try:
+        with open(filepath, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+
+            # Verifica che ci siano pagine
+            if len(reader.pages) == 0:
+                logger.error(f"PDF vuoto: {filepath}")
+                return False
+
+            # Tenta di estrarre testo dalla prima pagina
+            try:
+                first_page_text = reader.pages[0].extract_text()
+            except Exception as e:
+                logger.warning(f"Impossibile estrarre testo dal PDF: {e}")
+                # Non è necessariamente un errore fatale
+                return True
+
+        logger.debug(f"PDF valido: {filepath}")
+        return True
+
+    except Exception as e:
+        logger.error(f"PDF non valido ({filepath}): {e}")
+        return False
+
+
+def validate_file(filepath: str) -> bool:
+    """
+    Valida un file in base all'estensione.
+
+    Args:
+        filepath: Percorso del file
+
+    Returns:
+        True se il file è valido, False altrimenti
+    """
+    path = Path(filepath)
+
+    # Verifica esistenza
+    if not path.exists():
+        logger.error(f"File non trovato: {filepath}")
+        return False
+
+    # Verifica dimensione (almeno 1KB)
+    if path.stat().st_size < 1024:
+        logger.error(f"File troppo piccolo (< 1KB): {filepath}")
+        return False
+
+    # Valida in base al formato
+    extension = path.suffix.lower()
+
+    if extension == '.epub':
+        return validate_epub(str(filepath))
+    elif extension == '.pdf':
+        return validate_pdf(str(filepath))
+    else:
+        logger.error(f"Formato non supportato: {extension}")
+        return False
 
 
 # ============================================================================
@@ -233,7 +437,7 @@ def extract_chapters_from_epub(filepath: str, min_words: int = DEFAULT_MIN_WORDS
         Lista di dizionari con 'title' e 'text' per ogni capitolo
     """
     if not EPUB_SUPPORT:
-        print("❌ Supporto EPUB non disponibile. Installa: pip install ebooklib beautifulsoup4")
+        logger.error("Supporto EPUB non disponibile. Installa: pip install ebooklib beautifulsoup4")
         return []
 
     try:
@@ -275,13 +479,13 @@ def extract_chapters_from_epub(filepath: str, min_words: int = DEFAULT_MIN_WORDS
                 })
 
             except Exception as e:
-                print(f"⚠️  Errore nell'elaborazione item {idx}: {e}")
+                logger.warning(f"Errore nell'elaborazione item {idx}: {e}")
                 continue
 
         return chapters
 
     except Exception as e:
-        print(f"❌ Errore nella lettura EPUB: {e}")
+        logger.error(f"Errore nella lettura EPUB: {e}")
         return []
 
 
@@ -301,7 +505,7 @@ def extract_chapters_from_pdf(filepath: str, min_words: int = DEFAULT_MIN_WORDS)
         Lista di dizionari con 'title' e 'text' per ogni capitolo
     """
     if not PDF_SUPPORT:
-        print("❌ Supporto PDF non disponibile. Installa: pip install PyPDF2")
+        logger.error("Supporto PDF non disponibile. Installa: pip install PyPDF2")
         return []
 
     try:
@@ -314,7 +518,7 @@ def extract_chapters_from_pdf(filepath: str, min_words: int = DEFAULT_MIN_WORDS)
                 try:
                     full_text += page.extract_text() + "\n"
                 except Exception as e:
-                    print(f"⚠️  Errore nell'estrazione pagina: {e}")
+                    logger.warning(f"Errore nell'estrazione pagina: {e}")
                     continue
 
         # Tenta di dividere in capitoli usando pattern comuni
@@ -349,7 +553,7 @@ def extract_chapters_from_pdf(filepath: str, min_words: int = DEFAULT_MIN_WORDS)
 
         # Se non trova capitoli, divide in blocchi di dimensione fissa
         if not found_chapters:
-            print("⚠️  Nessun pattern di capitolo trovato. Suddivisione in blocchi...")
+            logger.warning("Nessun pattern di capitolo trovato. Suddivisione in blocchi...")
             words = full_text.split()
             chunk_size = 3000  # parole per blocco
 
@@ -366,7 +570,7 @@ def extract_chapters_from_pdf(filepath: str, min_words: int = DEFAULT_MIN_WORDS)
         return chapters
 
     except Exception as e:
-        print(f"❌ Errore nella lettura PDF: {e}")
+        logger.error(f"Errore nella lettura PDF: {e}")
         return []
 
 
@@ -392,28 +596,28 @@ def summarize_chapter(chapter_text: str, chapter_title: str, model: str = DEFAUL
         return call_ollama(prompt, model)
 
     # Altrimenti usa MAP-REDUCE
-    print(f"   📄 Capitolo lungo ({len(chapter_text)} char), applico MAP-REDUCE...")
+    logger.info(f"Capitolo lungo ({len(chapter_text)} char), applico MAP-REDUCE...")
 
     # MAP: riassumi ogni chunk
     chunks = chunk_text(chapter_text)
     partial_summaries = []
 
     for idx, chunk in enumerate(chunks, 1):
-        print(f"      Elaboro chunk {idx}/{len(chunks)}...")
+        logger.debug(f"Elaboro chunk {idx}/{len(chunks)}...")
         prompt = PROMPT_MAP.format(text=chunk)
         summary = call_ollama(prompt, model)
 
         if summary:
             partial_summaries.append(summary)
         else:
-            print(f"⚠️  Chunk {idx} saltato per errore")
+            logger.warning(f"Chunk {idx} saltato per errore")
 
     if not partial_summaries:
-        print("❌ Nessun riassunto parziale generato")
+        logger.error("Nessun riassunto parziale generato")
         return None
 
     # REDUCE: unisci i riassunti parziali
-    print(f"   🔄 Unisco {len(partial_summaries)} riassunti parziali...")
+    logger.info(f"Unisco {len(partial_summaries)} riassunti parziali...")
     combined = "\n\n---\n\n".join(partial_summaries)
     prompt = PROMPT_REDUCE.format(summaries=combined)
 
@@ -458,7 +662,7 @@ def write_docx_output(book_title: str, chapter_summaries: List[Dict[str, str]],
         True se successo, False altrimenti
     """
     if not DOCX_SUPPORT:
-        print("⚠️  Generazione DOCX non disponibile. Installa: pip install python-docx")
+        logger.warning("Generazione DOCX non disponibile. Installa: pip install python-docx")
         return False
 
     try:
@@ -492,7 +696,7 @@ def write_docx_output(book_title: str, chapter_summaries: List[Dict[str, str]],
         return True
 
     except Exception as e:
-        print(f"❌ Errore nella generazione DOCX: {e}")
+        logger.error(f"Errore nella generazione DOCX: {e}")
         return False
 
 
@@ -536,7 +740,7 @@ def write_md_output(book_title: str, chapter_summaries: List[Dict[str, str]],
         return True
 
     except Exception as e:
-        print(f"❌ Errore nella generazione Markdown: {e}")
+        logger.error(f"Errore nella generazione Markdown: {e}")
         return False
 
 
@@ -566,6 +770,12 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
     print(f"📚 Elaborazione: {filepath.name}")
     print(f"{'='*60}\n")
 
+    # [0/4] Validazione file
+    logger.info(f"Validazione file: {filepath.name}")
+    if not validate_file(str(filepath)):
+        logger.error(f"File non valido, saltato: {filepath.name}")
+        return False
+
     # [1/4] Estrazione capitoli
     print(f"[1/4] Estrazione capitoli da {filepath.name}")
 
@@ -574,14 +784,14 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
     elif extension == '.pdf':
         chapters = extract_chapters_from_pdf(str(filepath), min_words)
     else:
-        print(f"❌ Formato non supportato: {extension}")
+        logger.error(f"Formato non supportato: {extension}")
         return False
 
     if not chapters:
-        print("❌ Nessun capitolo estratto")
+        logger.error("Nessun capitolo estratto")
         return False
 
-    print(f"✅ Trovati {len(chapters)} capitoli\n")
+    logger.info(f"Trovati {len(chapters)} capitoli")
 
     # [2/4] Riassunto capitoli
     print(f"[2/4] Riassunto capitoli")
@@ -598,14 +808,14 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
                     'title': chapter['title'],
                     'summary': summary
                 })
-                print(f"   ✅ Completato")
+                logger.info(f"Capitolo {idx} completato")
             else:
-                print(f"   ⚠️  Saltato per errore")
+                logger.warning(f"Capitolo {idx} saltato per errore")
 
             pbar.update(1)
 
     if not chapter_summaries:
-        print("\n❌ Nessun riassunto generato")
+        logger.error("Nessun riassunto generato")
         return False
 
     # [3/4] Riassunto globale
@@ -613,10 +823,10 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
     global_summary = generate_global_summary(chapter_summaries, model)
 
     if not global_summary:
-        print("⚠️  Riassunto complessivo non generato, uso sintesi base")
+        logger.warning("Riassunto complessivo non generato, uso sintesi base")
         global_summary = "Riassunto complessivo non disponibile."
     else:
-        print("✅ Riassunto complessivo generato")
+        logger.info("Riassunto complessivo generato")
 
     # [4/4] Scrittura output
     print(f"\n[4/4] Scrittura file di output")
@@ -628,9 +838,9 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
     md_ok = write_md_output(book_title, chapter_summaries, global_summary, md_path)
 
     if docx_ok:
-        print(f"✅ DOCX: {docx_path}")
+        logger.info(f"DOCX salvato: {docx_path}")
     if md_ok:
-        print(f"✅ MD: {md_path}")
+        logger.info(f"MD salvato: {md_path}")
 
     return docx_ok or md_ok
 
@@ -648,59 +858,91 @@ Esempi:
         """
     )
 
-    parser.add_argument('--model', type=str, default=DEFAULT_MODEL,
+    parser.add_argument('--config', type=str, default=None,
+                       help='File di configurazione YAML/JSON (opzionale)')
+    parser.add_argument('--model', type=str, default=None,
                        help=f'Modello Ollama da usare (default: {DEFAULT_MODEL})')
-    parser.add_argument('--input_dir', type=str, default=DEFAULT_INPUT_DIR,
+    parser.add_argument('--input_dir', type=str, default=None,
                        help=f'Directory input (default: {DEFAULT_INPUT_DIR})')
-    parser.add_argument('--output_dir', type=str, default=DEFAULT_OUTPUT_DIR,
+    parser.add_argument('--output_dir', type=str, default=None,
                        help=f'Directory output (default: {DEFAULT_OUTPUT_DIR})')
-    parser.add_argument('--min_words', type=int, default=DEFAULT_MIN_WORDS,
+    parser.add_argument('--min_words', type=int, default=None,
                        help=f'Parole minime per capitolo (default: {DEFAULT_MIN_WORDS})')
-    parser.add_argument('--language', type=str, default=DEFAULT_LANGUAGE,
+    parser.add_argument('--language', type=str, default=None,
                        help=f'Lingua output (default: {DEFAULT_LANGUAGE})')
+    parser.add_argument('--log-file', type=str, default=None,
+                       help='File di log (opzionale, es: riassunti.log)')
+    parser.add_argument('--verbose', action='store_true',
+                       help='Mostra log dettagliati (DEBUG level)')
 
     args = parser.parse_args()
+
+    # Carica configurazione da file (se specificato)
+    config = {}
+    if args.config:
+        config = load_config(args.config)
+
+    # Merge config: CLI args > config file > defaults
+    # Funzione helper per ottenere il valore con priorità
+    def get_value(arg_value, config_key, default_value):
+        if arg_value is not None:
+            return arg_value
+        return config.get(config_key, default_value)
+
+    # Applica priorità
+    model = get_value(args.model, 'model', DEFAULT_MODEL)
+    input_dir = get_value(args.input_dir, 'input_dir', DEFAULT_INPUT_DIR)
+    output_dir = get_value(args.output_dir, 'output_dir', DEFAULT_OUTPUT_DIR)
+    min_words = get_value(args.min_words, 'min_words', DEFAULT_MIN_WORDS)
+    language = get_value(args.language, 'language', DEFAULT_LANGUAGE)
+    log_file = get_value(args.log_file, 'log_file', None)
+    verbose = args.verbose or config.get('verbose', False)
+
+    # Configura logging
+    setup_logging(log_file=log_file, verbose=verbose)
 
     print("\n" + "="*60)
     print("📚 RIASSUMI LIBRI - CLI Tool via Ollama")
     print("="*60)
-    print(f"Modello: {args.model}")
-    print(f"Input: {args.input_dir}")
-    print(f"Output: {args.output_dir}")
-    print(f"Min parole/capitolo: {args.min_words}")
+    print(f"Modello: {model}")
+    print(f"Input: {input_dir}")
+    print(f"Output: {output_dir}")
+    print(f"Min parole/capitolo: {min_words}")
+    if args.config:
+        print(f"Config: {args.config}")
     print("="*60 + "\n")
 
     # Verifica che Ollama sia raggiungibile
-    print("🔍 Verifica connessione a Ollama...")
+    logger.info("Verifica connessione a Ollama...")
     try:
         response = requests.get("http://localhost:11434/api/tags", timeout=5)
         response.raise_for_status()
-        print("✅ Ollama raggiungibile\n")
+        logger.info("Ollama raggiungibile")
     except Exception as e:
-        print(f"❌ Errore connessione Ollama: {e}")
-        print("   Assicurati che Ollama sia in esecuzione su http://localhost:11434")
+        logger.error(f"Errore connessione Ollama: {e}")
+        logger.error("Assicurati che Ollama sia in esecuzione su http://localhost:11434")
         sys.exit(1)
 
     # Verifica directory input
-    if not os.path.exists(args.input_dir):
-        print(f"❌ Directory input non trovata: {args.input_dir}")
+    if not os.path.exists(input_dir):
+        logger.error(f"Directory input non trovata: {input_dir}")
         sys.exit(1)
 
     # Crea directory output
-    ensure_directory(args.output_dir)
+    ensure_directory(output_dir)
 
     # Scansiona file
-    print(f"[1/4] Scansione {args.input_dir}")
+    logger.info(f"Scansione directory: {input_dir}")
     files = []
 
     for ext in ['.epub', '.pdf']:
-        files.extend(Path(args.input_dir).glob(f'*{ext}'))
+        files.extend(Path(input_dir).glob(f'*{ext}'))
 
     if not files:
-        print("❌ Nessun file EPUB o PDF trovato")
+        logger.error("Nessun file EPUB o PDF trovato")
         sys.exit(1)
 
-    print(f"Trovati {len(files)} file: {', '.join([f.name for f in files])}\n")
+    logger.info(f"Trovati {len(files)} file: {', '.join([f.name for f in files])}")
 
     # Elabora ogni file
     success_count = 0
@@ -711,18 +953,18 @@ Esempi:
         print(f"{'#'*60}")
 
         try:
-            if process_book(str(filepath), args.output_dir, args.model, args.min_words):
+            if process_book(str(filepath), output_dir, model, min_words):
                 success_count += 1
         except Exception as e:
-            print(f"\n❌ Errore nell'elaborazione: {e}")
+            logger.error(f"Errore nell'elaborazione: {e}", exc_info=verbose)
             continue
 
     # Riepilogo finale
     print(f"\n{'='*60}")
     print(f"✅ OPERAZIONE COMPLETATA")
     print(f"{'='*60}")
-    print(f"File elaborati: {success_count}/{len(files)}")
-    print(f"Output salvati in: {args.output_dir}")
+    logger.info(f"File elaborati: {success_count}/{len(files)}")
+    logger.info(f"Output salvati in: {output_dir}")
     print("="*60 + "\n")
 
 

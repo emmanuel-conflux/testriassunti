@@ -17,3 +17,6 @@ python-docx>=1.1.0
 
 # Optional: HTML parsing (installato con beautifulsoup4)
 lxml>=4.9.0
+
+# Optional: YAML config support
+PyYAML>=6.0

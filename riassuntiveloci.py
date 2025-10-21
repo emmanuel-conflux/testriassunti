@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-riassuntiveloci.py - CLI Tool ULTRA-VELOCE per Riassunti di Libri via Ollama
+riassuntiveloci.py - CLI Tool per Riassunti di Libri via Ollama
 
-APPROCCIO RADICALMENTE DIVERSO:
-- Sampling intelligente (non tutti i capitoli)
+APPROCCIO:
+- Sampling configurabile (da 30% a 100% del testo)
+- Sampling strategico: inizio, chunk distribuiti uniformemente, fine
 - Riassunto globale unico (no capitolo per capitolo)
 - Output minimalista (solo Markdown essenziale)
 - Prompt ultra-concisi (max 300 parole per riassunto)
@@ -12,7 +13,10 @@ APPROCCIO RADICALMENTE DIVERSO:
 - Chunk enormi (max 32k caratteri)
 - Temperature alta (velocità > qualità)
 
-GUADAGNO VELOCITÀ: 5-10x più veloce di riassumi.py
+USO:
+  --sampling-ratio 1.0   # 100% del testo (lento ma completo)
+  --sampling-ratio 0.6   # 60% del testo (bilanciato)
+  --sampling-ratio 0.3   # 30% del testo (veloce)
 """
 
 import os
@@ -43,10 +47,10 @@ except ImportError:
 
 
 # ============================================================================
-# CONFIGURAZIONE VELOCITÀ
+# CONFIGURAZIONE
 # ============================================================================
 
-VERSION = "2.0.0-VELOCE"
+VERSION = "2.2.0-CONFIGURABILE"
 LAST_UPDATE = "2025-10-21"
 
 DEFAULT_INPUT_DIR = os.path.expanduser("~/dariassumere")
@@ -54,13 +58,9 @@ DEFAULT_OUTPUT_DIR = os.path.expanduser("~/riassunti")
 DEFAULT_MODEL = "qwen3:8b"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
-# Configurazione VELOCITÀ MASSIMA
-SPEED_CHUNK_SIZE = 32000        # ENORME: 32k caratteri per chunk (massima efficienza)
-SPEED_MAX_CHUNKS = 5            # Massimo 5 chunk per libro (sampling)
-SPEED_SAMPLE_CHAPTERS = True    # Campiona solo alcuni capitoli
-SPEED_SAMPLE_RATIO = 0.3        # Usa solo 30% dei capitoli
-SPEED_MIN_SAMPLE = 3            # Minimo 3 capitoli campionati
-SPEED_MAX_SAMPLE = 8            # Massimo 8 capitoli campionati
+# Configurazione chunk
+SPEED_CHUNK_SIZE = 32000        # ENORME: 32k caratteri per chunk
+SPEED_MAX_CHUNKS = 5            # Parametro mantenuto per compatibilità (non più utilizzato)
 
 # Prompt ULTRA-CONCISI (velocità massima)
 PROMPT_FAST = """Riassumi il seguente testo in italiano.
@@ -141,7 +141,7 @@ def call_ollama_fast(prompt: str, model: str = DEFAULT_MODEL, max_retries: int =
 
 
 # ============================================================================
-# ESTRAZIONE ULTRA-VELOCE
+# ESTRAZIONE TESTO
 # ============================================================================
 
 def extract_text_fast_epub(filepath: str) -> str:
@@ -225,78 +225,81 @@ def extract_text_fast_pdf(filepath: str) -> str:
         return ""
 
 
-def smart_sample_text(text: str, max_chunks: int = SPEED_MAX_CHUNKS,
-                     chunk_size: int = SPEED_CHUNK_SIZE) -> List[str]:
+def split_text_into_chunks(text: str, chunk_size: int = SPEED_CHUNK_SIZE,
+                          sampling_ratio: float = 1.0) -> List[str]:
     """
-    Sampling INTELLIGENTE: prende inizio, campioni intermedi, e fine.
+    Divide il testo in chunk con sampling configurabile.
 
     Args:
         text: Testo completo del libro
-        max_chunks: Numero massimo di chunk da estrarre
         chunk_size: Dimensione di ogni chunk
+        sampling_ratio: Percentuale di chunk da mantenere (0.0-1.0)
+                       1.0 = tutti i chunk (lettura completa)
+                       0.3 = 30% dei chunk (veloce)
 
     Returns:
-        Lista di chunk campionati strategicamente
+        Lista di chunk campionati uniformemente
     """
     if len(text) <= chunk_size:
         return [text]
 
-    # Dividi il testo in segmenti
+    # Prima dividi tutto il testo in chunk
+    all_chunks = []
     words = text.split()
-    total_words = len(words)
     words_per_chunk = chunk_size // 5  # Stima ~5 caratteri per parola
 
-    if total_words <= words_per_chunk:
-        return [text]
-
-    chunks = []
-
-    # 1. INIZIO (sempre importante)
-    start_chunk = ' '.join(words[:words_per_chunk])
-    chunks.append(start_chunk)
-
-    if max_chunks == 1:
-        return chunks
-
-    # 2. FINE (sempre importante)
-    end_chunk = ' '.join(words[-words_per_chunk:])
-
-    if max_chunks == 2:
-        chunks.append(end_chunk)
-        return chunks
-
-    # 3. CAMPIONI INTERMEDI (distribuiti uniformemente)
-    num_middle_chunks = max_chunks - 2
-    middle_positions = []
-
-    for i in range(num_middle_chunks):
-        # Posizioni equidistanti tra inizio e fine
-        position = words_per_chunk + (i + 1) * (total_words - 2 * words_per_chunk) // (num_middle_chunks + 1)
-        middle_positions.append(position)
-
-    for pos in middle_positions:
-        chunk = ' '.join(words[pos:pos + words_per_chunk])
+    for i in range(0, len(words), words_per_chunk):
+        chunk = ' '.join(words[i:i + words_per_chunk])
         if len(chunk) > 500:  # Solo se ha contenuto significativo
-            chunks.append(chunk)
+            all_chunks.append(chunk)
 
-    # Aggiungi il chunk finale
-    chunks.append(end_chunk)
+    # Se sampling_ratio = 1.0, ritorna tutti i chunk
+    if sampling_ratio >= 1.0:
+        return all_chunks
 
-    return chunks
+    total_chunks = len(all_chunks)
+
+    # Calcola quanti chunk mantenere
+    num_chunks_to_keep = max(2, int(total_chunks * sampling_ratio))
+
+    # Se dobbiamo mantenere tutti o quasi tutti, ritorna tutto
+    if num_chunks_to_keep >= total_chunks:
+        return all_chunks
+
+    # Sampling strategico: mantieni inizio, fine, e chunk distribuiti uniformemente
+    selected_chunks = []
+
+    # 1. Sempre il primo chunk (inizio del libro)
+    selected_chunks.append(all_chunks[0])
+
+    # 2. Chunk intermedi distribuiti uniformemente
+    if num_chunks_to_keep > 2:
+        num_middle = num_chunks_to_keep - 2
+        # Distribuisci uniformemente i chunk nel mezzo
+        step = (total_chunks - 2) / (num_middle + 1)
+        for i in range(1, num_middle + 1):
+            idx = int(1 + i * step)
+            if idx < total_chunks - 1:
+                selected_chunks.append(all_chunks[idx])
+
+    # 3. Sempre l'ultimo chunk (fine del libro)
+    selected_chunks.append(all_chunks[-1])
+
+    return selected_chunks
 
 
 # ============================================================================
-# PROCESSING ULTRA-VELOCE
+# PROCESSING COMPLETO
 # ============================================================================
 
 def process_book_fast(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
-                     max_chunks: int = SPEED_MAX_CHUNKS) -> bool:
+                     sampling_ratio: float = 1.0) -> bool:
     """
-    Elaborazione ULTRA-VELOCE di un libro.
+    Elaborazione di un libro con sampling configurabile.
 
     STRATEGIA:
     1. Estrazione rapida tutto il testo
-    2. Sampling intelligente (solo parti chiave)
+    2. Divisione in chunk con sampling configurabile
     3. Riassunti ultra-concisi
     4. Output minimalista (solo .md)
 
@@ -304,7 +307,7 @@ def process_book_fast(filepath: str, output_dir: str, model: str = DEFAULT_MODEL
         filepath: Percorso del file del libro
         output_dir: Directory di output
         model: Modello Ollama da usare
-        max_chunks: Numero massimo di chunk da campionare
+        sampling_ratio: Percentuale di testo da processare (0.0-1.0)
 
     Returns:
         True se successo, False altrimenti
@@ -335,22 +338,30 @@ def process_book_fast(filepath: str, output_dir: str, model: str = DEFAULT_MODEL
     words_count = len(full_text.split())
     print(f"✅ Estratte ~{words_count:,} parole\n")
 
-    # [2/3] Sampling e Riassunto VELOCE
-    print(f"[2/3] ⚡ Sampling intelligente e riassunti rapidi...")
+    # [2/3] Divisione e Riassunto con sampling configurabile
+    print(f"[2/3] ⚡ Divisione del testo e riassunti...")
 
-    # Campiona parti strategiche
-    sampled_chunks = smart_sample_text(full_text,
-                                       max_chunks=max_chunks,
-                                       chunk_size=SPEED_CHUNK_SIZE)
+    # Divide il testo in chunk con sampling configurabile
+    text_chunks = split_text_into_chunks(full_text,
+                                        chunk_size=SPEED_CHUNK_SIZE,
+                                        sampling_ratio=sampling_ratio)
 
-    print(f"   📊 Campionati {len(sampled_chunks)} chunk strategici")
-    print(f"   (inizio, {len(sampled_chunks)-2} intermedi, fine)")
+    # Calcola chunk totali per mostrare la percentuale
+    words = full_text.split()
+    words_per_chunk = SPEED_CHUNK_SIZE // 5
+    total_possible_chunks = len([i for i in range(0, len(words), words_per_chunk)])
+
+    if sampling_ratio >= 1.0:
+        print(f"   📊 Processando {len(text_chunks)} chunk (100% del testo)")
+    else:
+        print(f"   📊 Processando {len(text_chunks)}/{total_possible_chunks} chunk ({sampling_ratio:.0%} del testo)")
+        print(f"   (sampling strategico: inizio, medio, fine)")
 
     # Riassumi ogni chunk
     chunk_summaries = []
 
-    for idx, chunk in enumerate(sampled_chunks, 1):
-        print(f"   ⚡ Chunk {idx}/{len(sampled_chunks)}... ", end='', flush=True)
+    for idx, chunk in enumerate(text_chunks, 1):
+        print(f"   ⚡ Chunk {idx}/{len(text_chunks)}... ", end='', flush=True)
 
         prompt = PROMPT_FAST.format(text=chunk)
         summary = call_ollama_fast(prompt, model)
@@ -386,11 +397,16 @@ def process_book_fast(filepath: str, output_dir: str, model: str = DEFAULT_MODEL
     md_path = os.path.join(output_dir, f"{book_title}.veloce.md")
 
     # Output ESSENZIALE (no formattazione elaborata)
+    if sampling_ratio >= 1.0:
+        mode_text = "Lettura completa del testo (100%)"
+    else:
+        mode_text = f"Sampling strategico ({sampling_ratio:.0%} del testo)"
+
     content = f"""# Riassunto Veloce — {book_title}
 
 **Generato con:** riassuntiveloci.py v{VERSION}
-**Modalità:** Ultra-veloce (sampling intelligente)
-**Chunk analizzati:** {len(chunk_summaries)}/{len(sampled_chunks)}
+**Modalità:** {mode_text}
+**Chunk analizzati:** {len(chunk_summaries)}/{total_possible_chunks}
 **Parole totali libro:** ~{words_count:,}
 
 ---
@@ -410,8 +426,7 @@ def process_book_fast(filepath: str, output_dir: str, model: str = DEFAULT_MODEL
 
     content += f"""---
 
-*Riassunto generato automaticamente con approccio ultra-veloce.*
-*Per riassunti più dettagliati, usa riassumi.py*
+*Riassunto generato automaticamente con lettura completa del testo.*
 """
 
     try:
@@ -431,29 +446,37 @@ def process_book_fast(filepath: str, output_dir: str, model: str = DEFAULT_MODEL
 def main():
     """Funzione principale del programma."""
     print("\n" + "="*70)
-    print("⚡ RIASSUNTI VELOCI - CLI Tool ULTRA-VELOCE via Ollama")
+    print("⚡ RIASSUNTI VELOCI - CLI Tool per Riassunti via Ollama")
     print("="*70)
     print(f"Versione: {VERSION}")
     print(f"Ultimo aggiornamento: {LAST_UPDATE}")
     print("")
-    print("OTTIMIZZAZIONI VELOCITÀ:")
-    print("  • Sampling intelligente (non tutti i capitoli)")
+    print("CARATTERISTICHE:")
+    print("  • Sampling configurabile (velocità vs completezza)")
+    print("  • --sampling-ratio 1.0 = 100% (completo)")
+    print("  • --sampling-ratio 0.6 = 60% (bilanciato)")
+    print("  • --sampling-ratio 0.3 = 30% (veloce)")
     print("  • Riassunti ultra-concisi (max 300 parole)")
     print("  • Chunk enormi (32k caratteri)")
-    print("  • Niente checkpoint")
-    print("  • Output minimalista")
-    print("")
-    print("GUADAGNO: 5-10x più veloce di riassumi.py")
     print("="*70 + "\n")
 
     parser = argparse.ArgumentParser(
-        description="CLI Tool ULTRA-VELOCE per Riassunti di Libri via Ollama",
+        description="CLI Tool per Riassunti di Libri via Ollama con Sampling Configurabile",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Esempi:
-  python riassuntiveloci.py
-  python riassuntiveloci.py --model qwen3:8b
-  python riassuntiveloci.py --input_dir /path/to/books
+  # Lettura completa (lento ma completo)
+  python riassuntiveloci.py --sampling-ratio 1.0
+
+  # Bilanciato (velocità e qualità)
+  python riassuntiveloci.py --sampling-ratio 0.6
+
+  # Veloce (solo 30% del testo)
+  python riassuntiveloci.py --sampling-ratio 0.3
+
+  # Con parametri personalizzati
+  python riassuntiveloci.py --model qwen3:8b --sampling-ratio 0.5
+  python riassuntiveloci.py --input_dir /path/to/books --sampling-ratio 0.7
         """
     )
 
@@ -463,17 +486,23 @@ Esempi:
                        help=f'Directory input (default: {DEFAULT_INPUT_DIR})')
     parser.add_argument('--output_dir', type=str, default=DEFAULT_OUTPUT_DIR,
                        help=f'Directory output (default: {DEFAULT_OUTPUT_DIR})')
-    parser.add_argument('--max_chunks', type=int, default=SPEED_MAX_CHUNKS,
-                       help=f'Numero massimo chunk da campionare (default: {SPEED_MAX_CHUNKS})')
+    parser.add_argument('--sampling-ratio', type=float, default=1.0,
+                       help='Percentuale di testo da processare (0.0-1.0, default: 1.0 = tutto)')
 
     args = parser.parse_args()
+
+    # Validazione sampling-ratio
+    sampling_ratio = args.sampling_ratio
+    if sampling_ratio < 0.0 or sampling_ratio > 1.0:
+        print("❌ Errore: --sampling-ratio deve essere tra 0.0 e 1.0")
+        sys.exit(1)
 
     print("📋 PARAMETRI DI ESECUZIONE")
     print("="*70)
     print(f"Modello: {args.model}")
     print(f"Input: {args.input_dir}")
     print(f"Output: {args.output_dir}")
-    print(f"Max chunk campionati: {args.max_chunks}")
+    print(f"Sampling ratio: {sampling_ratio:.0%} del testo")
     print(f"Dimensione chunk: {SPEED_CHUNK_SIZE:,} caratteri")
     print("="*70 + "\n")
 
@@ -522,7 +551,7 @@ Esempi:
         print(f"{'#'*60}")
 
         try:
-            if process_book_fast(str(filepath), args.output_dir, args.model, args.max_chunks):
+            if process_book_fast(str(filepath), args.output_dir, args.model, sampling_ratio):
                 success_count += 1
         except Exception as e:
             print(f"\n❌ Errore: {e}")
@@ -530,7 +559,10 @@ Esempi:
 
     # Riepilogo finale
     print(f"\n{'='*60}")
-    print(f"⚡ COMPLETATO IN MODALITÀ VELOCE")
+    if sampling_ratio >= 1.0:
+        print(f"✅ COMPLETATO - LETTURA COMPLETA (100%)")
+    else:
+        print(f"✅ COMPLETATO - SAMPLING {sampling_ratio:.0%}")
     print(f"{'='*60}")
     print(f"File elaborati: {success_count}/{len(files)}")
     print(f"Output salvati in: {args.output_dir}")

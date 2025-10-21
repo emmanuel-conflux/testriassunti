@@ -78,10 +78,21 @@ C:\
 python riassumi.py
 ```
 
-Questo comando:
-1. Cerca file `.epub` e `.pdf` in `C:\dariassumere`
-2. Li elabora con il modello `qwen3:8b`
-3. Salva i riassunti in `C:\riassunti`
+Quando lanciato senza parametri, il programma:
+1. **Chiede** se vuoi usare la configurazione interattiva guidata
+   - Se rispondi **sì** (o premi INVIO): ti guida nella configurazione completa
+   - Se rispondi **no**: usa i valori predefiniti
+2. Cerca file `.epub` e `.pdf` nella directory input
+3. Li elabora con Ollama
+4. Salva i riassunti nella directory output
+
+#### Modalità Interattiva Esplicita
+
+Puoi saltare la domanda e avviare direttamente la modalità interattiva:
+
+```bash
+python riassumi.py --interactive
+```
 
 ### Parametri Configurabili
 
@@ -89,13 +100,17 @@ Questo comando:
 python riassumi.py [opzioni]
 
 Opzioni:
+  -i, --interactive      Avvia modalità interattiva guidata (salta la domanda)
   --model MODEL          Modello Ollama (default: qwen3:8b)
-  --input_dir DIR        Directory input (default: C:\dariassumere)
-  --output_dir DIR       Directory output (default: C:\riassunti)
+  --input_dir DIR        Directory input (default: ~/dariassumere)
+  --output_dir DIR       Directory output (default: ~/riassunti)
   --min_words NUM        Parole minime per capitolo (default: 300)
+  --chunk_size NUM       Dimensione chunk in caratteri (default: 12000)
   --language LANG        Lingua output (default: it)
-  -h, --help            Mostra questo messaggio
+  -h, --help             Mostra questo messaggio
 ```
+
+**Nota**: Se specifichi parametri da linea di comando, il programma NON chiederà se vuoi usare la modalità interattiva.
 
 ### Esempi
 

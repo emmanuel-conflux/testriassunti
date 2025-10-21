@@ -53,7 +53,7 @@ except ImportError:
 # CONFIGURAZIONE
 # ============================================================================
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 LAST_UPDATE = "2025-10-21"
 
 DEFAULT_INPUT_DIR = os.path.expanduser("~/dariassumere")
@@ -64,8 +64,15 @@ DEFAULT_LANGUAGE = "it"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
 # Chunking configuration
-MAX_CHUNK_SIZE = 12000  # caratteri
-CHUNK_OVERLAP = 600     # caratteri
+DEFAULT_CHUNK_SIZE = 12000  # caratteri (piccolo: 6000, medio: 12000, grande: 24000)
+CHUNK_OVERLAP = 600         # caratteri
+
+# Preset chunk sizes
+CHUNK_PRESETS = {
+    'piccolo': 6000,
+    'medio': 12000,
+    'grande': 24000
+}
 
 # Prompt templates
 PROMPT_MAP = """Sei un analista testuale.
@@ -129,7 +136,7 @@ def count_words(text: str) -> int:
     return len(text.split())
 
 
-def chunk_text(text: str, max_size: int = MAX_CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
+def chunk_text(text: str, max_size: int = DEFAULT_CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
     """
     Suddivide il testo in blocchi di dimensione massima con overlap.
 
@@ -216,6 +223,24 @@ def interactive_setup() -> Dict[str, any]:
     except ValueError:
         print(f"   ⚠️  Valore non valido, uso default: {DEFAULT_MIN_WORDS}")
         config['min_words'] = DEFAULT_MIN_WORDS
+
+    # Dimensione chunk
+    print(f"\n📏 Dimensione blocchi di testo (chunk) per l'elaborazione:")
+    print(f"   IMPATTO SULLA VELOCITÀ:")
+    print(f"   - PICCOLO (6k):  Più chiamate a Ollama, più lento ma usa meno RAM")
+    print(f"   - MEDIO (12k):   Bilanciato (consigliato)")
+    print(f"   - GRANDE (24k):  Meno chiamate a Ollama, più veloce ma usa più RAM")
+    print(f"   ")
+    print(f"   Chunk più grandi = MENO chiamate totali = PIÙ VELOCE")
+    print(f"   (Ogni capitolo lungo viene diviso in chunk per elaborazione)")
+    chunk_choice = input(f"   Dimensione [piccolo/medio/grande]: ").strip().lower()
+
+    if chunk_choice in CHUNK_PRESETS:
+        config['chunk_size'] = CHUNK_PRESETS[chunk_choice]
+        print(f"   ✅ Impostato: {chunk_choice} ({config['chunk_size']} caratteri)")
+    else:
+        config['chunk_size'] = DEFAULT_CHUNK_SIZE
+        print(f"   ℹ️  Uso default: medio ({DEFAULT_CHUNK_SIZE} caratteri)")
 
     # Selezione file
     print(f"\n🎯 Vuoi elaborare:")
@@ -440,7 +465,8 @@ def extract_chapters_from_pdf(filepath: str, min_words: int = DEFAULT_MIN_WORDS)
 # SUMMARIZATION
 # ============================================================================
 
-def summarize_chapter(chapter_text: str, chapter_title: str, model: str = DEFAULT_MODEL) -> Optional[str]:
+def summarize_chapter(chapter_text: str, chapter_title: str, model: str = DEFAULT_MODEL,
+                     chunk_size: int = DEFAULT_CHUNK_SIZE) -> Optional[str]:
     """
     Riassume un capitolo usando MAP-REDUCE se necessario.
 
@@ -448,12 +474,13 @@ def summarize_chapter(chapter_text: str, chapter_title: str, model: str = DEFAUL
         chapter_text: Testo del capitolo
         chapter_title: Titolo del capitolo
         model: Modello Ollama da usare
+        chunk_size: Dimensione massima dei chunk in caratteri
 
     Returns:
         Riassunto del capitolo o None
     """
     # Se il testo è abbastanza corto, usa direttamente MAP
-    if len(chapter_text) <= MAX_CHUNK_SIZE:
+    if len(chapter_text) <= chunk_size:
         prompt = PROMPT_MAP.format(text=chapter_text)
         return call_ollama(prompt, model)
 
@@ -461,7 +488,7 @@ def summarize_chapter(chapter_text: str, chapter_title: str, model: str = DEFAUL
     print(f"   📄 Capitolo lungo ({len(chapter_text)} char), applico MAP-REDUCE...")
 
     # MAP: riassumi ogni chunk
-    chunks = chunk_text(chapter_text)
+    chunks = chunk_text(chapter_text, max_size=chunk_size)
     partial_summaries = []
 
     for idx, chunk in enumerate(chunks, 1):
@@ -625,7 +652,8 @@ def get_checkpoint_path(book_title: str, output_dir: str) -> str:
 
 
 def save_checkpoint(book_title: str, output_dir: str, chapter_summaries: List[Dict[str, str]],
-                   current_index: int, total_chapters: int, model: str, min_words: int) -> None:
+                   current_index: int, total_chapters: int, model: str, min_words: int,
+                   chunk_size: int) -> None:
     """
     Salva lo stato corrente dell'elaborazione.
 
@@ -637,6 +665,7 @@ def save_checkpoint(book_title: str, output_dir: str, chapter_summaries: List[Di
         total_chapters: Numero totale di capitoli
         model: Modello usato
         min_words: Parole minime per capitolo
+        chunk_size: Dimensione chunk in caratteri
     """
     checkpoint_path = get_checkpoint_path(book_title, output_dir)
 
@@ -645,6 +674,7 @@ def save_checkpoint(book_title: str, output_dir: str, chapter_summaries: List[Di
         'timestamp': time.time(),
         'model': model,
         'min_words': min_words,
+        'chunk_size': chunk_size,
         'total_chapters': total_chapters,
         'current_index': current_index,
         'chapter_summaries': chapter_summaries
@@ -712,6 +742,14 @@ def ask_resume_checkpoint(checkpoint: Dict) -> bool:
     total = checkpoint['total_chapters']
     percentage = (completed / total * 100) if total > 0 else 0
 
+    # Trova il nome del preset chunk per mostrarlo
+    chunk_size = checkpoint.get('chunk_size', DEFAULT_CHUNK_SIZE)
+    chunk_name = 'personalizzato'
+    for name, size in CHUNK_PRESETS.items():
+        if size == chunk_size:
+            chunk_name = name
+            break
+
     print("\n" + "="*70)
     print("🔄 LAVORO INTERROTTO TROVATO")
     print("="*70)
@@ -719,6 +757,7 @@ def ask_resume_checkpoint(checkpoint: Dict) -> bool:
     print(f"Data interruzione: {timestamp}")
     print(f"Progresso: {completed}/{total} capitoli ({percentage:.1f}%)")
     print(f"Modello: {checkpoint['model']}")
+    print(f"Chunk size: {chunk_name} ({chunk_size} caratteri)")
     print("="*70)
 
     while True:
@@ -736,7 +775,7 @@ def ask_resume_checkpoint(checkpoint: Dict) -> bool:
 # ============================================================================
 
 def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
-                min_words: int = DEFAULT_MIN_WORDS) -> bool:
+                min_words: int = DEFAULT_MIN_WORDS, chunk_size: int = DEFAULT_CHUNK_SIZE) -> bool:
     """
     Elabora un singolo libro con supporto per checkpoint/resume.
 
@@ -745,6 +784,7 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
         output_dir: Directory di output
         model: Modello Ollama da usare
         min_words: Numero minimo di parole per capitolo
+        chunk_size: Dimensione chunk in caratteri
 
     Returns:
         True se successo, False altrimenti
@@ -765,7 +805,10 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
 
     if checkpoint:
         # Verifica che i parametri siano compatibili
-        if checkpoint['model'] == model and checkpoint['min_words'] == min_words:
+        checkpoint_chunk_size = checkpoint.get('chunk_size', DEFAULT_CHUNK_SIZE)
+        if (checkpoint['model'] == model and
+            checkpoint['min_words'] == min_words and
+            checkpoint_chunk_size == chunk_size):
             if ask_resume_checkpoint(checkpoint):
                 resume_from_checkpoint = True
                 chapter_summaries = checkpoint['chapter_summaries']
@@ -820,7 +863,7 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
 
             print(f"\n   📖 Capitolo {idx}/{len(chapters)}: {chapter['title']}")
 
-            summary = summarize_chapter(chapter['text'], chapter['title'], model)
+            summary = summarize_chapter(chapter['text'], chapter['title'], model, chunk_size)
 
             if summary:
                 chapter_summaries.append({
@@ -831,7 +874,7 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
 
                 # Salva checkpoint dopo ogni capitolo completato
                 save_checkpoint(book_title, output_dir, chapter_summaries,
-                               idx, len(chapters), model, min_words)
+                               idx, len(chapters), model, min_words, chunk_size)
             else:
                 print(f"   ⚠️  Saltato per errore")
 
@@ -951,6 +994,8 @@ Esempi:
                        help=f'Directory output (default: {DEFAULT_OUTPUT_DIR})')
     parser.add_argument('--min_words', type=int, default=DEFAULT_MIN_WORDS,
                        help=f'Parole minime per capitolo (default: {DEFAULT_MIN_WORDS})')
+    parser.add_argument('--chunk_size', type=int, default=DEFAULT_CHUNK_SIZE,
+                       help=f'Dimensione chunk in caratteri (default: {DEFAULT_CHUNK_SIZE})')
     parser.add_argument('--language', type=str, default=DEFAULT_LANGUAGE,
                        help=f'Lingua output (default: {DEFAULT_LANGUAGE})')
 
@@ -964,7 +1009,15 @@ Esempi:
         args.input_dir = config['input_dir']
         args.output_dir = config['output_dir']
         args.min_words = config['min_words']
+        args.chunk_size = config['chunk_size']
         select_files = config['select_files']
+
+    # Trova il nome del preset chunk per mostrarlo
+    chunk_name = 'personalizzato'
+    for name, size in CHUNK_PRESETS.items():
+        if size == args.chunk_size:
+            chunk_name = name
+            break
 
     print("📋 PARAMETRI DI ESECUZIONE")
     print("="*70)
@@ -972,6 +1025,7 @@ Esempi:
     print(f"Input: {args.input_dir}")
     print(f"Output: {args.output_dir}")
     print(f"Min parole/capitolo: {args.min_words}")
+    print(f"Chunk size: {chunk_name} ({args.chunk_size} caratteri)")
     print("="*70 + "\n")
 
     # Verifica directory input
@@ -1029,7 +1083,7 @@ Esempi:
         print(f"{'#'*60}")
 
         try:
-            if process_book(str(filepath), args.output_dir, args.model, args.min_words):
+            if process_book(str(filepath), args.output_dir, args.model, args.min_words, args.chunk_size):
                 success_count += 1
         except Exception as e:
             print(f"\n❌ Errore nell'elaborazione: {e}")

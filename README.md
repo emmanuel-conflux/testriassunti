@@ -9,9 +9,12 @@ Tool CLI in Python per generare riassunti dettagliati di libri (EPUB/PDF) utiliz
 - **Riassunti dettagliati**: Capitolo per capitolo con sintesi globale
 - **Output multipli**: File Word (.docx) e Markdown (.md)
 - **MAP-REDUCE**: Gestione intelligente di testi lunghi
+- **Chunk configurabile**: Ottimizza velocità scegliendo dimensione blocchi (piccolo/medio/grande)
+- **Checkpoint/Resume**: Riprendi lavori interrotti dal punto esatto dove ti eri fermato
+- **Modalità interattiva**: Configurazione guidata user-friendly con domande passo-passo
 - **Multilingua**: Output sempre in italiano, anche per libri in altre lingue
 - **Progress tracking**: Barra di progresso e logging dettagliato
-- **Configurabile**: Parametri CLI personalizzabili
+- **Configurabile**: Parametri CLI personalizzabili o modalità interattiva
 
 ## 🔧 Requisiti
 
@@ -212,7 +215,31 @@ Genera un riassunto complessivo in italiano con:
 - Sintesi complessiva finale
 - Formato universale e leggibile
 
-### 5. Gestione Errori
+### 5. Sistema Checkpoint/Resume
+
+Il programma salva automaticamente il progresso dopo ogni capitolo completato:
+
+- **Salvataggio automatico**: Checkpoint creato dopo ogni capitolo elaborato
+- **Ripresa intelligente**: Se interrompi il programma (Ctrl+C, crash, ecc.), al prossimo avvio ti chiederà se vuoi riprendere
+- **Validazione parametri**: Riprende solo se modello, chunk size e min_words sono gli stessi
+- **File checkpoint**: Salvato in `.checkpoint_<nome_libro>.json` nella directory di output
+- **Pulizia automatica**: Checkpoint rimosso al completamento con successo
+
+**Esempio di ripresa:**
+```
+🔄 LAVORO INTERROTTO TROVATO
+======================================================================
+Libro: Il_Nome_della_Rosa
+Data interruzione: 2025-10-21 14:32:15
+Progresso: 7/10 capitoli (70.0%)
+Modello: qwen3:8b
+Chunk size: medio (12000 caratteri)
+======================================================================
+
+Vuoi riprendere da qui? (s/n) [s]: _
+```
+
+### 6. Gestione Errori
 
 - **Retry Logic**: 3 tentativi con backoff esponenziale (2s, 4s, 8s)
 - **Fallback**: Se un capitolo fallisce, continua con i successivi

@@ -1,8 +1,32 @@
 # 📚 Riassumi Libri - CLI Tool via Ollama
 
-Tool CLI in Python per generare riassunti dettagliati di libri (EPUB/PDF) utilizzando Ollama locale.
+Tool CLI in Python per generare riassunti di libri (EPUB/PDF) utilizzando Ollama locale.
 
-## 🎯 Caratteristiche
+## ⚡ Due Modalità Disponibili
+
+### 📖 **riassumi.py** - Modalità Dettagliata
+Analisi completa capitolo per capitolo con riassunti approfonditi.
+- ✅ Riassunti dettagliati (400-900 parole per capitolo)
+- ✅ Output DOCX + Markdown con formattazione professionale
+- ✅ Sistema checkpoint/resume per riprendere lavori interrotti
+- ✅ MAP-REDUCE completo per gestione testi lunghi
+- ⏱️ **Tempo**: ~10-30 minuti per libro medio
+
+### ⚡ **riassuntiveloci.py** - Modalità Ultra-Veloce (NUOVO!)
+Approccio radicalmente diverso per velocità massima.
+- ✅ **5-10x più veloce** tramite sampling intelligente
+- ✅ Riassunti concisi (300 parole per estratto, 500 per globale)
+- ✅ Output Markdown minimalista
+- ✅ Niente overhead: esecuzione diretta senza checkpoint
+- ⚡ **Tempo**: ~2-5 minuti per libro medio
+
+**Quale scegliere?**
+- 📖 Usa `riassumi.py` per analisi approfondite, documenti di studio, o quando hai tempo
+- ⚡ Usa `riassuntiveloci.py` per overview rapide, screening libri, o quando hai fretta
+
+---
+
+## 🎯 Caratteristiche (riassumi.py)
 
 - **Analisi locale**: Tutto funziona offline tramite Ollama
 - **Supporto formati**: EPUB e PDF
@@ -69,11 +93,103 @@ C:\
 └── riassunti\             # Output: riassunti generati
     ├── libro1.riassunto.docx
     ├── libro1.riassunto.md
+    ├── libro1.veloce.md      # Output modalità veloce
     ├── libro2.riassunto.docx
-    └── libro2.riassunto.md
+    ├── libro2.riassunto.md
+    └── libro2.veloce.md      # Output modalità veloce
 ```
 
 ## 🚀 Utilizzo
+
+### ⚡ RIASSUNTIVELOCI.PY - Modalità Ultra-Veloce
+
+#### Esecuzione Base
+```bash
+python riassuntiveloci.py
+```
+
+Il programma:
+1. Scansiona la directory input
+2. Per ogni libro:
+   - Estrae tutto il testo rapidamente
+   - **Campiona 5 chunk strategici** (inizio, 3 intermedi, fine)
+   - Genera riassunti ultra-concisi (max 300 parole per chunk)
+   - Crea un riassunto globale (max 500 parole)
+3. Salva output in `.veloce.md` (solo Markdown)
+
+#### Parametri
+```bash
+python riassuntiveloci.py [opzioni]
+
+Opzioni:
+  --model MODEL          Modello Ollama (default: qwen3:8b)
+  --input_dir DIR        Directory input (default: ~/dariassumere)
+  --output_dir DIR       Directory output (default: ~/riassunti)
+  --max_chunks NUM       Max chunk da campionare (default: 5)
+  -h, --help             Mostra questo messaggio
+```
+
+#### Esempi
+```bash
+# Esecuzione standard (5 chunk campionati)
+python riassuntiveloci.py
+
+# Campionamento più dettagliato (8 chunk)
+python riassuntiveloci.py --max_chunks 8
+
+# Modello più veloce
+python riassuntiveloci.py --model llama3:8b
+
+# Directory personalizzate
+python riassuntiveloci.py --input_dir /path/to/books --output_dir /path/to/output
+```
+
+#### Output di Esempio
+```
+============================================================
+⚡ RIASSUNTI VELOCI - CLI Tool ULTRA-VELOCE via Ollama
+============================================================
+Versione: 2.0.0-VELOCE
+OTTIMIZZAZIONI VELOCITÀ:
+  • Sampling intelligente (non tutti i capitoli)
+  • Riassunti ultra-concisi (max 300 parole)
+  • Chunk enormi (32k caratteri)
+  • Output minimalista
+
+GUADAGNO: 5-10x più veloce di riassumi.py
+============================================================
+
+[1/3] ⚡ Estrazione rapida testo completo...
+✅ Estratte ~87,423 parole
+
+[2/3] ⚡ Sampling intelligente e riassunti rapidi...
+   📊 Campionati 5 chunk strategici
+   (inizio, 3 intermedi, fine)
+   ⚡ Chunk 1/5... ✅
+   ⚡ Chunk 2/5... ✅
+   ⚡ Chunk 3/5... ✅
+   ⚡ Chunk 4/5... ✅
+   ⚡ Chunk 5/5... ✅
+✅ 5 riassunti parziali generati
+
+[3/3] ⚡ Generazione riassunto globale rapido...
+✅ Riassunto globale generato
+
+[4/4] ⚡ Scrittura output minimalista...
+✅ MD: ~/riassunti/Il_Nome_della_Rosa.veloce.md
+
+============================================================
+⚡ COMPLETATO IN MODALITÀ VELOCE
+============================================================
+File elaborati: 1/1
+Output salvati in: ~/riassunti
+Suffisso file: .veloce.md
+============================================================
+```
+
+---
+
+### 📖 RIASSUMI.PY - Modalità Dettagliata
 
 ### Esecuzione Base
 
@@ -143,7 +259,9 @@ python riassumi.py \
 
 ## 📖 Come Funziona
 
-### 1. Estrazione Capitoli
+### 📖 RIASSUMI.PY - Approccio Dettagliato
+
+#### 1. Estrazione Capitoli
 
 #### EPUB
 - Legge lo spine del file per l'ordine di lettura
@@ -303,6 +421,66 @@ Output salvati in: C:\riassunti
 ============================================================
 ```
 
+---
+
+### ⚡ RIASSUNTIVELOCI.PY - Approccio Ultra-Veloce
+
+#### 1. Estrazione Rapida
+- **EPUB/PDF**: Estrae tutto il testo in un colpo solo, senza parsing elaborato dei capitoli
+- **Niente filtraggio**: Prende tutto il contenuto disponibile
+- **Velocità massima**: Minimizza le operazioni di parsing
+
+#### 2. Sampling Intelligente
+Invece di elaborare tutto il libro, usa una strategia di campionamento:
+
+1. **Chunk INIZIO**: Prime ~6400 parole (sempre importante per setup e personaggi)
+2. **Chunk INTERMEDI**: 3 campioni distribuiti uniformemente nel testo
+3. **Chunk FINE**: Ultime ~6400 parole (sempre importante per conclusioni)
+
+**Totale**: 5 chunk strategici invece di 20+ capitoli completi
+
+**Dimensione chunk**: 32.000 caratteri (vs 12.000 di riassumi.py)
+→ Meno chiamate a Ollama = Molto più veloce
+
+#### 3. Riassunti Ultra-Concisi
+
+**Prompt veloce** (vs prompt elaborato di riassumi.py):
+```
+Riassumi il seguente testo in italiano.
+Massimo 300 parole, solo concetti chiave.
+```
+
+**Prompt globale veloce**:
+```
+Basandoti su questi estratti, genera un riassunto complessivo del libro.
+Massimo 500 parole.
+```
+
+#### 4. Ottimizzazioni Ollama
+- **Temperature**: 0.7 (alta, meno "thinking" = più veloce)
+- **Context window**: 32.000 token (ridotto vs 128.000 = più veloce)
+- **Predict limit**: 500 token max per risposta
+- **Niente retry**: Un solo tentativo per chiamata (fallisce velocemente)
+
+#### 5. Output Minimalista
+- **Solo Markdown**: Niente generazione DOCX (più lenta)
+- **Formattazione essenziale**: Solo headers e separatori base
+- **Niente indici elaborati**: Struttura semplice e diretta
+
+#### 6. Confronto Velocità
+
+| Aspetto | riassumi.py | riassuntiveloci.py | Guadagno |
+|---------|-------------|---------------------|----------|
+| Chunk processati | 20-30 | 5 | **4-6x meno** |
+| Parole per riassunto | 600-900 | 300 | **2-3x meno** |
+| Chiamate Ollama | 25-40 | 6 | **4-7x meno** |
+| Context window | 128k | 32k | **4x ridotto** |
+| Output generati | 2 (DOCX+MD) | 1 (MD) | **2x meno** |
+| Checkpoint overhead | Sì | No | **0% overhead** |
+| **Tempo totale** | **10-30 min** | **2-5 min** | **5-10x più veloce** |
+
+---
+
 ## 🛠️ Modelli Ollama Consigliati
 
 ### Bilanciati (Qualità/Velocità)
@@ -381,30 +559,64 @@ pip install -r requirements.txt
 
 ## 📝 Note Tecniche
 
-### Chunking
+### 📖 RIASSUMI.PY
+
+#### Chunking
 - **Max size**: 12.000 caratteri per blocco
 - **Overlap**: 600 caratteri tra blocchi
 - **Divisione**: Cerca punti naturali (`.`, `\n`, spazio)
 
-### Limiti
+#### Limiti
 - **Context window**: 128.000 token (configurabile in `call_ollama()`)
 - **Temperature**: 0.3 (bilanciato tra creatività e coerenza)
 - **Timeout**: 300 secondi per chiamata Ollama
 
-### Performance
+#### Performance
 - **EPUB medio** (10 capitoli): ~5-10 minuti con qwen3:8b
 - **PDF lungo** (20+ sezioni): ~15-30 minuti
 - **Dipende da**: CPU, RAM, modello scelto, lunghezza libro
 
+### ⚡ RIASSUNTIVELOCI.PY
+
+#### Chunking
+- **Max size**: 32.000 caratteri per blocco (2.7x più grande)
+- **Overlap**: 0 (niente overlap, sampling discontinuo)
+- **Strategia**: Campionamento intelligente invece di divisione continua
+
+#### Limiti
+- **Context window**: 32.000 token (ridotto per velocità)
+- **Temperature**: 0.7 (alta per velocità)
+- **Timeout**: 180 secondi per chiamata Ollama
+- **Max predict**: 500 token per risposta
+
+#### Performance
+- **EPUB medio** (10 capitoli): ~2-3 minuti con qwen3:8b
+- **PDF lungo** (20+ sezioni): ~3-5 minuti
+- **Guadagno**: 5-10x più veloce di riassumi.py
+- **Trade-off**: Meno dettaglio, ma overview efficace
+
 ## 🔮 Sviluppi Futuri
 
+### 📖 RIASSUMI.PY
 - [ ] GUI con Tkinter
 - [ ] Supporto altri formati (MOBI, AZW3, TXT)
 - [ ] Cache riassunti parziali
-- [ ] Elaborazione parallela di più libri
-- [ ] Esportazione in altri formati (HTML, LaTeX)
 - [ ] Configurazione prompt personalizzabili
 - [ ] Supporto multi-lingua per output
+- [ ] Esportazione in altri formati (HTML, LaTeX, PDF)
+
+### ⚡ RIASSUNTIVELOCI.PY
+- [ ] **Parallelizzazione**: Elaborare chunk contemporaneamente
+- [ ] **Streaming**: Output progressivo durante elaborazione
+- [ ] **Cache smart**: Riuso estratti già processati
+- [ ] **Sampling configurabile**: Scegliere quanti chunk campionare
+- [ ] **Modalità "flash"**: Solo inizio + fine (2 chunk, <1 minuto)
+- [ ] **Batch processing**: Elaborare più libri in parallelo
+
+### ✨ GENERALE
+- [ ] Tool unificato con flag `--fast` / `--detailed`
+- [ ] Confronto automatico qualità riassunti (veloce vs dettagliato)
+- [ ] Supporto web UI per entrambe le modalità
 
 ## 📄 Licenza
 

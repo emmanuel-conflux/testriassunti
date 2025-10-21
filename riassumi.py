@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-riassumi_libri.py - CLI Tool per Riassunti di Libri via Ollama
+riassumi.py - CLI Tool per Riassunti di Libri via Ollama
 
 Legge file EPUB o PDF, li analizza tramite Ollama locale e genera
 riassunti dettagliati capitolo per capitolo in formato DOCX e Markdown.
@@ -978,9 +978,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Esempi:
-  python riassumi_libri.py --interactive
-  python riassumi_libri.py --model qwen3:30b --min_words 500
-  python riassumi_libri.py --input_dir /path/to/books --output_dir /path/to/output
+  python riassumi.py --interactive
+  python riassumi.py --model qwen3:30b --min_words 500
+  python riassumi.py --input_dir /path/to/books --output_dir /path/to/output
         """
     )
 

@@ -8,7 +8,7 @@
 
 ## Sommario Esecutivo
 
-Tutti i test sono stati eseguiti con successo. Il progetto **riassumi_libri.py** implementa correttamente tutte le features richieste e supera il 100% dei test di verifica.
+Tutti i test sono stati eseguiti con successo. Il progetto **riassumi.py** implementa correttamente tutte le features richieste e supera il 100% dei test di verifica.
 
 ### Metriche Complessive
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-test_features.py - Test completo delle features di riassumi_libri.py
+test_features.py - Test completo delle features di riassumi.py
 
 Verifica che tutte le funzionalità richieste siano presenti e funzionanti.
 """
@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 # Importa il modulo da testare
-import riassumi_libri as rl
+import riassumi as rl
 
 # Colori per output
 class Colors:
@@ -525,7 +525,7 @@ def main():
     print(f"{Colors.ENDC}\n")
 
     print("Questo script verifica che tutte le features richieste siano")
-    print("presenti e funzionanti nel progetto riassumi_libri.py\n")
+    print("presenti e funzionanti nel progetto riassumi.py\n")
 
     results = []
 

@@ -53,8 +53,8 @@ except ImportError:
 # CONFIGURAZIONE
 # ============================================================================
 
-DEFAULT_INPUT_DIR = r"C:\dariassumere"
-DEFAULT_OUTPUT_DIR = r"C:\riassunti"
+DEFAULT_INPUT_DIR = os.path.expanduser("~/dariassumere")
+DEFAULT_OUTPUT_DIR = os.path.expanduser("~/riassunti")
 DEFAULT_MODEL = "qwen3:8b"
 DEFAULT_MIN_WORDS = 300
 DEFAULT_LANGUAGE = "it"
@@ -670,7 +670,38 @@ Esempi:
     print(f"Min parole/capitolo: {args.min_words}")
     print("="*60 + "\n")
 
-    # Verifica che Ollama sia raggiungibile
+    # Verifica directory input
+    if not os.path.exists(args.input_dir):
+        print(f"❌ Directory input non trovata: {args.input_dir}")
+        print(f"   Crea la directory con: mkdir -p {args.input_dir}")
+        sys.exit(1)
+
+    if not os.path.isdir(args.input_dir):
+        print(f"❌ Il percorso input non è una directory: {args.input_dir}")
+        sys.exit(1)
+
+    # Scansiona file prima di fare altre verifiche
+    print(f"🔍 Scansione {args.input_dir}")
+    files = []
+
+    for ext in ['.epub', '.pdf']:
+        files.extend(Path(args.input_dir).glob(f'*{ext}'))
+
+    if not files:
+        print("❌ Nessun file EPUB o PDF trovato nella directory input")
+        print(f"   Aggiungi file .epub o .pdf in: {args.input_dir}")
+        sys.exit(1)
+
+    print(f"✅ Trovati {len(files)} file: {', '.join([f.name for f in files])}\n")
+
+    # Crea directory output
+    try:
+        ensure_directory(args.output_dir)
+    except Exception as e:
+        print(f"❌ Impossibile creare directory output: {e}")
+        sys.exit(1)
+
+    # Verifica che Ollama sia raggiungibile (solo dopo aver verificato che ci sono file)
     print("🔍 Verifica connessione a Ollama...")
     try:
         response = requests.get("http://localhost:11434/api/tags", timeout=5)
@@ -680,27 +711,6 @@ Esempi:
         print(f"❌ Errore connessione Ollama: {e}")
         print("   Assicurati che Ollama sia in esecuzione su http://localhost:11434")
         sys.exit(1)
-
-    # Verifica directory input
-    if not os.path.exists(args.input_dir):
-        print(f"❌ Directory input non trovata: {args.input_dir}")
-        sys.exit(1)
-
-    # Crea directory output
-    ensure_directory(args.output_dir)
-
-    # Scansiona file
-    print(f"[1/4] Scansione {args.input_dir}")
-    files = []
-
-    for ext in ['.epub', '.pdf']:
-        files.extend(Path(args.input_dir).glob(f'*{ext}'))
-
-    if not files:
-        print("❌ Nessun file EPUB o PDF trovato")
-        sys.exit(1)
-
-    print(f"Trovati {len(files)} file: {', '.join([f.name for f in files])}\n")
 
     # Elabora ogni file
     success_count = 0

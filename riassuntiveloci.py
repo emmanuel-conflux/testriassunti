@@ -55,7 +55,7 @@ DEFAULT_MODEL = "qwen3:8b"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
 # Configurazione VELOCITÀ MASSIMA
-SPEED_CHUNK_SIZE = 32000        # ENORME: 32k caratteri per chunk
+SPEED_CHUNK_SIZE = 32000        # ENORME: 32k caratteri per chunk (massima efficienza)
 SPEED_MAX_CHUNKS = 5            # Massimo 5 chunk per libro (sampling)
 SPEED_SAMPLE_CHAPTERS = True    # Campiona solo alcuni capitoli
 SPEED_SAMPLE_RATIO = 0.3        # Usa solo 30% dei capitoli
@@ -96,13 +96,14 @@ def sanitize_filename(filename: str) -> str:
     return name.strip()
 
 
-def call_ollama_fast(prompt: str, model: str = DEFAULT_MODEL) -> Optional[str]:
+def call_ollama_fast(prompt: str, model: str = DEFAULT_MODEL, max_retries: int = 2) -> Optional[str]:
     """
-    Chiamata VELOCE a Ollama (niente retry, alta temperature, context ridotto).
+    Chiamata a Ollama con retry limitato per timeout.
 
     Args:
         prompt: Il prompt da inviare
         model: Nome del modello Ollama
+        max_retries: Numero massimo di tentativi (default: 2)
 
     Returns:
         Testo generato o None in caso di errore
@@ -118,16 +119,25 @@ def call_ollama_fast(prompt: str, model: str = DEFAULT_MODEL) -> Optional[str]:
         }
     }
 
-    try:
-        # Timeout di 7 minuti: chunk grandi (32k) richiedono più tempo
-        # Il vero guadagno di velocità è fare MENO chiamate, non timeout più corti
-        response = requests.post(OLLAMA_URL, json=payload, timeout=420)
-        response.raise_for_status()
-        result = response.json()
-        return result.get("response", "").strip()
-    except Exception as e:
-        print(f"⚠️  Errore Ollama: {e}")
-        return None
+    for attempt in range(max_retries):
+        try:
+            # Timeout di 10 minuti: chunk enormi (32k) richiedono tempo sostanziale
+            # Il guadagno di velocità viene da fare MENO chiamate totali (5 vs 20-30)
+            response = requests.post(OLLAMA_URL, json=payload, timeout=600)
+            response.raise_for_status()
+            result = response.json()
+            return result.get("response", "").strip()
+        except requests.exceptions.Timeout as e:
+            if attempt < max_retries - 1:
+                print(f"⏱️  Timeout, riprovo ({attempt + 2}/{max_retries})...")
+            else:
+                print(f"⚠️  Timeout dopo {max_retries} tentativi")
+                return None
+        except Exception as e:
+            print(f"⚠️  Errore Ollama: {e}")
+            return None
+
+    return None
 
 
 # ============================================================================

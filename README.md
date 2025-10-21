@@ -153,7 +153,9 @@ Versione: 2.0.0-VELOCE
 OTTIMIZZAZIONI VELOCITÀ:
   • Sampling intelligente (non tutti i capitoli)
   • Riassunti ultra-concisi (max 300 parole)
-  • Chunk enormi (32k caratteri)
+  • Chunk enormi (32k caratteri, massima efficienza)
+  • Retry automatico per timeout (max 2 tentativi)
+  • Timeout esteso (10 minuti per chunk)
   • Output minimalista
 
 GUADAGNO: 5-10x più veloce di riassumi.py
@@ -440,7 +442,7 @@ Invece di elaborare tutto il libro, usa una strategia di campionamento:
 **Totale**: 5 chunk strategici invece di 20+ capitoli completi
 
 **Dimensione chunk**: 32.000 caratteri (vs 12.000 di riassumi.py)
-→ Meno chiamate a Ollama = Molto più veloce
+→ 2.7x più grandi = Molte meno chiamate a Ollama = Molto più veloce
 
 #### 3. Riassunti Ultra-Concisi
 
@@ -460,7 +462,7 @@ Massimo 500 parole.
 - **Temperature**: 0.7 (alta, meno "thinking" = più veloce)
 - **Context window**: 32.000 token (ridotto vs 128.000 = più veloce)
 - **Predict limit**: 500 token max per risposta
-- **Niente retry**: Un solo tentativo per chiamata (fallisce velocemente)
+- **Retry limitato**: Max 2 tentativi per timeout occasionali (bilanciato)
 
 #### 5. Output Minimalista
 - **Solo Markdown**: Niente generazione DOCX (più lenta)
@@ -579,14 +581,15 @@ pip install -r requirements.txt
 ### ⚡ RIASSUNTIVELOCI.PY
 
 #### Chunking
-- **Max size**: 32.000 caratteri per blocco (2.7x più grande)
+- **Max size**: 32.000 caratteri per blocco (2.7x più grande di riassumi.py)
 - **Overlap**: 0 (niente overlap, sampling discontinuo)
 - **Strategia**: Campionamento intelligente invece di divisione continua
+- **Retry**: Max 2 tentativi per gestire timeout occasionali
 
 #### Limiti
 - **Context window**: 32.000 token (ridotto per velocità)
 - **Temperature**: 0.7 (alta per velocità)
-- **Timeout**: 420 secondi (7 min) per chiamata Ollama - chunk grandi richiedono più tempo
+- **Timeout**: 600 secondi (10 min) per chiamata - chunk enormi richiedono tempo
 - **Max predict**: 500 token per risposta
 
 #### Performance

@@ -13,8 +13,10 @@ import argparse
 import time
 import re
 import json
+import hashlib
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
+from datetime import datetime
 
 # Dependencies
 import requests
@@ -63,6 +65,11 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 # Chunking configuration
 MAX_CHUNK_SIZE = 12000  # caratteri
 CHUNK_OVERLAP = 600     # caratteri
+
+# Resume configuration
+HASH_PREFIX_LENGTH = 8000  # caratteri per calcolare hash
+HASH_OUTPUT_LENGTH = 8     # caratteri hash nel nome file
+HTTP_TIMEOUT = 180         # secondi per chiamate Ollama
 
 # Prompt templates
 PROMPT_MAP = """Sei un analista testuale.
@@ -124,6 +131,195 @@ def sanitize_filename(filename: str) -> str:
 def count_words(text: str) -> int:
     """Conta le parole in un testo."""
     return len(text.split())
+
+
+def chapter_hash(text: str) -> str:
+    """
+    Calcola hash SHA1 delle prime 8000 battute del testo.
+
+    Args:
+        text: Testo del capitolo
+
+    Returns:
+        Primi 8 caratteri dell'hash SHA1
+    """
+    prefix = text[:HASH_PREFIX_LENGTH]
+    hash_obj = hashlib.sha1(prefix.encode('utf-8'))
+    return hash_obj.hexdigest()[:HASH_OUTPUT_LENGTH]
+
+
+def ensure_resume_dirs(book_output_dir: str) -> None:
+    """
+    Crea la struttura di directory per il resume.
+
+    Args:
+        book_output_dir: Directory principale del libro
+    """
+    Path(book_output_dir).mkdir(parents=True, exist_ok=True)
+    Path(book_output_dir, "chapters").mkdir(parents=True, exist_ok=True)
+
+
+def load_state(state_file: str) -> Optional[Dict]:
+    """
+    Carica il file di stato se esistente e valido.
+
+    Args:
+        state_file: Percorso del file state.json
+
+    Returns:
+        Dizionario con lo stato o None se non esiste/corrotto
+    """
+    if not os.path.exists(state_file):
+        return None
+
+    try:
+        with open(state_file, 'r', encoding='utf-8') as f:
+            state = json.load(f)
+
+        # Validazione base
+        required_keys = ['book_title', 'total_chapters', 'completed', 'chapter_hashes', 'model']
+        if not all(key in state for key in required_keys):
+            print("⚠️  File state.json corrotto, verrà rigenerato")
+            return None
+
+        return state
+
+    except (json.JSONDecodeError, Exception) as e:
+        print(f"⚠️  Errore lettura state.json: {e}, verrà rigenerato")
+        return None
+
+
+def save_state(state_file: str, state: Dict) -> None:
+    """
+    Salva il file di stato in modo atomico.
+
+    Args:
+        state_file: Percorso del file state.json
+        state: Dizionario con lo stato da salvare
+    """
+    # Aggiorna timestamp
+    state['timestamp'] = datetime.now().isoformat()
+
+    # Salvataggio atomico: scrivi su temp file poi rinomina
+    temp_file = state_file + '.tmp'
+    try:
+        with open(temp_file, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+
+        # Rinomina atomicamente
+        os.replace(temp_file, state_file)
+
+    except Exception as e:
+        print(f"⚠️  Errore salvataggio state.json: {e}")
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+
+
+def chapter_filename(chapter_num: int, chapter_title: str, chapter_hash: str) -> str:
+    """
+    Genera il nome del file per un capitolo.
+
+    Args:
+        chapter_num: Numero del capitolo (1-based)
+        chapter_title: Titolo del capitolo
+        chapter_hash: Hash a 8 caratteri del capitolo
+
+    Returns:
+        Nome del file nel formato NN_<titolo-sanitizzato>_<hash8>.md
+    """
+    # Sanitizza il titolo
+    title_clean = re.sub(r'[<>:"/\\|?*]', '_', chapter_title)
+    title_clean = title_clean.strip()[:50]  # Limita lunghezza
+
+    # Formato: NN_titolo_hash8.md
+    return f"{chapter_num:02d}_{title_clean}_{chapter_hash}.md"
+
+
+def should_skip_chapter(chapter_idx: int, chapter_text: str, state: Dict,
+                       chapters_dir: str) -> Tuple[bool, str]:
+    """
+    Verifica se un capitolo può essere saltato (già elaborato e invariato).
+
+    Args:
+        chapter_idx: Indice del capitolo (1-based)
+        chapter_text: Testo del capitolo
+        state: Stato corrente
+        chapters_dir: Directory dei capitoli
+
+    Returns:
+        Tuple (skip: bool, hash: str)
+    """
+    # Calcola hash corrente
+    current_hash = chapter_hash(chapter_text)
+
+    # Verifica se il capitolo è in completed
+    if chapter_idx not in state['completed']:
+        return False, current_hash
+
+    # Verifica se l'hash coincide
+    stored_hash = state['chapter_hashes'].get(str(chapter_idx))
+    if stored_hash != current_hash:
+        print(f"   ⚠️  Hash cambiato per capitolo {chapter_idx} (era {stored_hash}, ora {current_hash})")
+        return False, current_hash
+
+    # Verifica se esiste il file .md corrispondente
+    # Cerca file che iniziano con NN_ e contengono l'hash
+    pattern = f"{chapter_idx:02d}_*_{current_hash}.md"
+    matching_files = list(Path(chapters_dir).glob(pattern))
+
+    if not matching_files:
+        print(f"   ⚠️  File mancante per capitolo {chapter_idx}")
+        return False, current_hash
+
+    # Tutto OK, possiamo saltare
+    return True, current_hash
+
+
+def rebuild_state_from_chapters(chapters_dir: str, book_title: str,
+                                total_chapters: int, model: str) -> Dict:
+    """
+    Ricostruisce lo stato scansionando i file .md esistenti.
+
+    Args:
+        chapters_dir: Directory dei capitoli
+        book_title: Titolo del libro
+        total_chapters: Numero totale di capitoli
+        model: Modello usato
+
+    Returns:
+        Dizionario con lo stato ricostruito
+    """
+    state = {
+        'book_title': book_title,
+        'total_chapters': total_chapters,
+        'completed': [],
+        'chapter_hashes': {},
+        'model': model,
+        'timestamp': datetime.now().isoformat()
+    }
+
+    # Scansiona directory chapters
+    if not os.path.exists(chapters_dir):
+        return state
+
+    # Pattern: NN_*_HASH8.md
+    pattern = re.compile(r'^(\d{2})_.*_([a-f0-9]{8})\.md$')
+
+    for filename in os.listdir(chapters_dir):
+        match = pattern.match(filename)
+        if match:
+            chapter_num = int(match.group(1))
+            chapter_hash = match.group(2)
+
+            if chapter_num not in state['completed']:
+                state['completed'].append(chapter_num)
+                state['chapter_hashes'][str(chapter_num)] = chapter_hash
+
+    # Ordina completed
+    state['completed'].sort()
+
+    print(f"   ℹ️  Ricostruiti {len(state['completed'])} capitoli dallo stato precedente")
+    return state
 
 
 def chunk_text(text: str, max_size: int = MAX_CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
@@ -189,13 +385,14 @@ def call_ollama(prompt: str, model: str = DEFAULT_MODEL, temperature: float = 0.
         "stream": False,
         "options": {
             "temperature": temperature,
-            "num_ctx": 128000
+            "num_ctx": 32768,
+            "num_predict": 2048
         }
     }
 
     for attempt in range(max_retries):
         try:
-            response = requests.post(OLLAMA_URL, json=payload, timeout=300)
+            response = requests.post(OLLAMA_URL, json=payload, timeout=HTTP_TIMEOUT)
             response.raise_for_status()
 
             result = response.json()
@@ -440,11 +637,132 @@ def generate_global_summary(chapter_summaries: List[Dict[str, str]], model: str 
 
 
 # ============================================================================
+# CHAPTER SUMMARY PERSISTENCE
+# ============================================================================
+
+def save_chapter_summary(chapters_dir: str, chapter_num: int, chapter_title: str,
+                        chapter_hash: str, summary: str) -> bool:
+    """
+    Salva il riassunto di un singolo capitolo.
+
+    Args:
+        chapters_dir: Directory dei capitoli
+        chapter_num: Numero del capitolo (1-based)
+        chapter_title: Titolo del capitolo
+        chapter_hash: Hash del capitolo
+        summary: Riassunto da salvare
+
+    Returns:
+        True se successo, False altrimenti
+    """
+    try:
+        filename = chapter_filename(chapter_num, chapter_title, chapter_hash)
+        filepath = os.path.join(chapters_dir, filename)
+
+        # Crea contenuto Markdown
+        content = f"# {chapter_title}\n\n{summary}\n"
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(content)
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Errore salvataggio capitolo {chapter_num}: {e}")
+        return False
+
+
+def load_chapter_summaries(chapters_dir: str, total_chapters: int) -> List[Dict[str, str]]:
+    """
+    Carica tutti i riassunti dei capitoli dalla directory.
+
+    Args:
+        chapters_dir: Directory dei capitoli
+        total_chapters: Numero totale di capitoli
+
+    Returns:
+        Lista di dizionari con 'title' e 'summary' per ogni capitolo
+    """
+    summaries = []
+
+    # Pattern: NN_*_HASH8.md
+    pattern = re.compile(r'^(\d{2})_(.*)_([a-f0-9]{8})\.md$')
+
+    # Leggi tutti i file e organizzali per numero capitolo
+    chapter_files = {}
+    for filename in os.listdir(chapters_dir):
+        match = pattern.match(filename)
+        if match:
+            chapter_num = int(match.group(1))
+            chapter_files[chapter_num] = os.path.join(chapters_dir, filename)
+
+    # Carica in ordine
+    for i in range(1, total_chapters + 1):
+        if i in chapter_files:
+            try:
+                with open(chapter_files[i], 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                # Estrai titolo e contenuto
+                lines = content.split('\n', 1)
+                title = lines[0].strip('# ').strip() if lines else f"Capitolo {i}"
+                summary_text = lines[1].strip() if len(lines) > 1 else ""
+
+                summaries.append({
+                    'title': title,
+                    'summary': summary_text
+                })
+
+            except Exception as e:
+                print(f"⚠️  Errore caricamento capitolo {i}: {e}")
+                summaries.append({
+                    'title': f"Capitolo {i}",
+                    'summary': "[Contenuto non disponibile]"
+                })
+        else:
+            summaries.append({
+                'title': f"Capitolo {i}",
+                'summary': "[Capitolo non elaborato]"
+            })
+
+    return summaries
+
+
+# ============================================================================
 # OUTPUT GENERATION
 # ============================================================================
 
+def get_available_filename(base_path: str) -> str:
+    """
+    Trova un nome file disponibile, aggiungendo suffisso -1, -2, ecc. se necessario.
+
+    Args:
+        base_path: Percorso del file desiderato
+
+    Returns:
+        Percorso disponibile
+    """
+    if not os.path.exists(base_path):
+        return base_path
+
+    # File esiste, prova con suffissi
+    path = Path(base_path)
+    base_name = path.stem
+    extension = path.suffix
+    directory = path.parent
+
+    counter = 1
+    while True:
+        new_path = directory / f"{base_name}-{counter}{extension}"
+        if not os.path.exists(new_path):
+            return str(new_path)
+        counter += 1
+        if counter > 100:  # Safety limit
+            raise Exception("Troppi file con lo stesso nome")
+
+
 def write_docx_output(book_title: str, chapter_summaries: List[Dict[str, str]],
-                     global_summary: str, output_path: str) -> bool:
+                     global_summary: str, output_path: str) -> Tuple[bool, str]:
     """
     Genera un file DOCX con i riassunti.
 
@@ -455,13 +773,18 @@ def write_docx_output(book_title: str, chapter_summaries: List[Dict[str, str]],
         output_path: Percorso del file di output
 
     Returns:
-        True se successo, False altrimenti
+        Tuple (success: bool, actual_path: str)
     """
     if not DOCX_SUPPORT:
         print("⚠️  Generazione DOCX non disponibile. Installa: pip install python-docx")
-        return False
+        return False, ""
 
     try:
+        # Trova un percorso disponibile (gestisce file aperti)
+        actual_path = get_available_filename(output_path)
+        if actual_path != output_path:
+            print(f"   ℹ️  File principale occupato, salvo come: {Path(actual_path).name}")
+
         doc = Document()
 
         # Titolo principale
@@ -488,16 +811,16 @@ def write_docx_output(book_title: str, chapter_summaries: List[Dict[str, str]],
         doc.add_paragraph(global_summary)
 
         # Salva
-        doc.save(output_path)
-        return True
+        doc.save(actual_path)
+        return True, actual_path
 
     except Exception as e:
         print(f"❌ Errore nella generazione DOCX: {e}")
-        return False
+        return False, ""
 
 
 def write_md_output(book_title: str, chapter_summaries: List[Dict[str, str]],
-                   global_summary: str, output_path: str) -> bool:
+                   global_summary: str, output_path: str) -> Tuple[bool, str]:
     """
     Genera un file Markdown con i riassunti.
 
@@ -508,9 +831,14 @@ def write_md_output(book_title: str, chapter_summaries: List[Dict[str, str]],
         output_path: Percorso del file di output
 
     Returns:
-        True se successo, False altrimenti
+        Tuple (success: bool, actual_path: str)
     """
     try:
+        # Trova un percorso disponibile (gestisce file aperti)
+        actual_path = get_available_filename(output_path)
+        if actual_path != output_path:
+            print(f"   ℹ️  File principale occupato, salvo come: {Path(actual_path).name}")
+
         content = f"# Riassunto dettagliato — {book_title}\n\n"
 
         # Indice
@@ -530,14 +858,14 @@ def write_md_output(book_title: str, chapter_summaries: List[Dict[str, str]],
         content += f"{global_summary}\n"
 
         # Scrivi file
-        with open(output_path, 'w', encoding='utf-8') as f:
+        with open(actual_path, 'w', encoding='utf-8') as f:
             f.write(content)
 
-        return True
+        return True, actual_path
 
     except Exception as e:
         print(f"❌ Errore nella generazione Markdown: {e}")
-        return False
+        return False, ""
 
 
 # ============================================================================
@@ -547,7 +875,7 @@ def write_md_output(book_title: str, chapter_summaries: List[Dict[str, str]],
 def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
                 min_words: int = DEFAULT_MIN_WORDS) -> bool:
     """
-    Elabora un singolo libro.
+    Elabora un singolo libro con supporto per ripresa (resume).
 
     Args:
         filepath: Percorso del file del libro
@@ -562,9 +890,17 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
     extension = filepath.suffix.lower()
     book_title = sanitize_filename(filepath.name)
 
+    # Setup directory struttura
+    book_output_dir = os.path.join(output_dir, book_title)
+    chapters_dir = os.path.join(book_output_dir, "chapters")
+    state_file = os.path.join(book_output_dir, "state.json")
+
     print(f"\n{'='*60}")
     print(f"📚 Elaborazione: {filepath.name}")
     print(f"{'='*60}\n")
+
+    # Crea struttura directory
+    ensure_resume_dirs(book_output_dir)
 
     # [1/4] Estrazione capitoli
     print(f"[1/4] Estrazione capitoli da {filepath.name}")
@@ -581,56 +917,95 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
         print("❌ Nessun capitolo estratto")
         return False
 
-    print(f"✅ Trovati {len(chapters)} capitoli\n")
+    total_chapters = len(chapters)
+    print(f"✅ Trovati {total_chapters} capitoli\n")
+
+    # Carica o crea stato
+    state = load_state(state_file)
+    if state is None:
+        # Tenta ricostruzione da file esistenti
+        state = rebuild_state_from_chapters(chapters_dir, book_title, total_chapters, model)
+    else:
+        print(f"   ℹ️  Ripresa elaborazione: {len(state['completed'])}/{total_chapters} capitoli completati")
+
+    # Verifica coerenza
+    if state['total_chapters'] != total_chapters:
+        print(f"   ⚠️  Numero capitoli cambiato: era {state['total_chapters']}, ora {total_chapters}")
+        state['total_chapters'] = total_chapters
 
     # [2/4] Riassunto capitoli
-    print(f"[2/4] Riassunto capitoli")
-    chapter_summaries = []
+    print(f"\n[2/4] Riassunto capitoli")
 
-    with tqdm(total=len(chapters), desc="Elaborazione capitoli", unit="cap") as pbar:
+    with tqdm(total=total_chapters, desc="Elaborazione capitoli", unit="cap") as pbar:
         for idx, chapter in enumerate(chapters, 1):
-            print(f"\n   📖 Capitolo {idx}/{len(chapters)}: {chapter['title']}")
+            # Verifica se può essere saltato
+            skip, current_hash = should_skip_chapter(idx, chapter['text'], state, chapters_dir)
+
+            if skip:
+                print(f"\n   ⏭️  Capitolo {idx}/{total_chapters} — già riassunto (hash {current_hash})")
+                pbar.update(1)
+                continue
+
+            # Elabora capitolo
+            print(f"\n   📘 Capitolo {idx}/{total_chapters} — {chapter['title']}")
 
             summary = summarize_chapter(chapter['text'], chapter['title'], model)
 
             if summary:
-                chapter_summaries.append({
-                    'title': chapter['title'],
-                    'summary': summary
-                })
-                print(f"   ✅ Completato")
+                # Salva capitolo
+                if save_chapter_summary(chapters_dir, idx, chapter['title'], current_hash, summary):
+                    # Aggiorna stato
+                    if idx not in state['completed']:
+                        state['completed'].append(idx)
+                        state['completed'].sort()
+                    state['chapter_hashes'][str(idx)] = current_hash
+                    save_state(state_file, state)
+
+                    print(f"   ✅ Completato")
+                else:
+                    print(f"   ⚠️  Errore salvataggio")
             else:
-                print(f"   ⚠️  Saltato per errore")
+                print(f"   ⚠️  Errore generazione riassunto")
 
             pbar.update(1)
 
-    if not chapter_summaries:
-        print("\n❌ Nessun riassunto generato")
+    # Verifica completamento
+    if len(state['completed']) != total_chapters:
+        print(f"\n⚠️  Elaborazione incompleta: {len(state['completed'])}/{total_chapters} capitoli")
+        print(f"   Capitoli mancanti: {sorted(set(range(1, total_chapters + 1)) - set(state['completed']))}")
+        print(f"   Output parziali salvati in: {book_output_dir}")
         return False
 
-    # [3/4] Riassunto globale
-    print(f"\n[3/4] Generazione riassunto complessivo")
+    # [3/4] Sintesi globale
+    print(f"\n[3/4] Generazione sintesi globale")
+
+    # Carica tutti i riassunti dei capitoli
+    chapter_summaries = load_chapter_summaries(chapters_dir, total_chapters)
+
     global_summary = generate_global_summary(chapter_summaries, model)
 
     if not global_summary:
-        print("⚠️  Riassunto complessivo non generato, uso sintesi base")
-        global_summary = "Riassunto complessivo non disponibile."
+        print("⚠️  Sintesi complessiva non generata, uso sintesi base")
+        global_summary = "Sintesi complessiva non disponibile."
     else:
-        print("✅ Riassunto complessivo generato")
+        print("✅ Sintesi complessiva generata")
 
-    # [4/4] Scrittura output
-    print(f"\n[4/4] Scrittura file di output")
+    # [4/4] Scrittura output finale
+    print(f"\n[4/4] Scrittura file finali")
 
-    docx_path = os.path.join(output_dir, f"{book_title}.riassunto.docx")
-    md_path = os.path.join(output_dir, f"{book_title}.riassunto.md")
+    final_docx = os.path.join(book_output_dir, "final.docx")
+    final_md = os.path.join(book_output_dir, "final.md")
 
-    docx_ok = write_docx_output(book_title, chapter_summaries, global_summary, docx_path)
-    md_ok = write_md_output(book_title, chapter_summaries, global_summary, md_path)
+    docx_ok, docx_path = write_docx_output(book_title, chapter_summaries, global_summary, final_docx)
+    md_ok, md_path = write_md_output(book_title, chapter_summaries, global_summary, final_md)
 
     if docx_ok:
         print(f"✅ DOCX: {docx_path}")
     if md_ok:
         print(f"✅ MD: {md_path}")
+
+    print(f"\n✨ Elaborazione completata!")
+    print(f"   Directory output: {book_output_dir}")
 
     return docx_ok or md_ok
 

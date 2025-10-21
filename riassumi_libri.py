@@ -53,6 +53,9 @@ except ImportError:
 # CONFIGURAZIONE
 # ============================================================================
 
+VERSION = "1.0.0"
+LAST_UPDATE = "2025-10-21"
+
 DEFAULT_INPUT_DIR = os.path.expanduser("~/dariassumere")
 DEFAULT_OUTPUT_DIR = os.path.expanduser("~/riassunti")
 DEFAULT_MODEL = "qwen3:8b"
@@ -163,6 +166,69 @@ def chunk_text(text: str, max_size: int = MAX_CHUNK_SIZE, overlap: int = CHUNK_O
         start = end - overlap if end < len(text) else end
 
     return chunks
+
+
+def show_banner() -> None:
+    """Mostra il banner iniziale con versione e data di aggiornamento."""
+    print("\n" + "="*70)
+    print("📚 RIASSUMI LIBRI - CLI Tool via Ollama")
+    print("="*70)
+    print(f"Versione: {VERSION}")
+    print(f"Ultimo aggiornamento: {LAST_UPDATE}")
+    print("="*70 + "\n")
+
+
+def interactive_setup() -> Dict[str, any]:
+    """
+    Guida l'utente attraverso un setup interattivo.
+
+    Returns:
+        Dizionario con le configurazioni scelte dall'utente
+    """
+    print("🔧 CONFIGURAZIONE INIZIALE")
+    print("-" * 70)
+    print("Premi INVIO per usare i valori predefiniti\n")
+
+    config = {}
+
+    # Modello Ollama
+    print(f"📦 Modello Ollama da usare:")
+    print(f"   Suggerimenti: qwen3:8b (veloce), qwen3:30b (preciso), llama3:8b")
+    model = input(f"   Modello [{DEFAULT_MODEL}]: ").strip()
+    config['model'] = model if model else DEFAULT_MODEL
+
+    # Directory input
+    print(f"\n📂 Directory contenente i libri da riassumere:")
+    input_dir = input(f"   Path [{DEFAULT_INPUT_DIR}]: ").strip()
+    config['input_dir'] = os.path.expanduser(input_dir) if input_dir else DEFAULT_INPUT_DIR
+
+    # Directory output
+    print(f"\n📁 Directory dove salvare i riassunti:")
+    output_dir = input(f"   Path [{DEFAULT_OUTPUT_DIR}]: ").strip()
+    config['output_dir'] = os.path.expanduser(output_dir) if output_dir else DEFAULT_OUTPUT_DIR
+
+    # Parole minime per capitolo
+    print(f"\n📝 Numero minimo di parole per considerare un capitolo valido:")
+    print(f"   Valori bassi (100-200) includono più sezioni, valori alti (500+) solo capitoli sostanziali")
+    min_words_str = input(f"   Parole minime [{DEFAULT_MIN_WORDS}]: ").strip()
+    try:
+        config['min_words'] = int(min_words_str) if min_words_str else DEFAULT_MIN_WORDS
+    except ValueError:
+        print(f"   ⚠️  Valore non valido, uso default: {DEFAULT_MIN_WORDS}")
+        config['min_words'] = DEFAULT_MIN_WORDS
+
+    # Selezione file
+    print(f"\n🎯 Vuoi elaborare:")
+    print(f"   1. Tutti i file nella directory")
+    print(f"   2. Solo file specifici (selezione interattiva)")
+    choice = input(f"   Scelta [1]: ").strip()
+    config['select_files'] = (choice == '2')
+
+    print("\n" + "="*70)
+    print("✅ CONFIGURAZIONE COMPLETATA")
+    print("="*70 + "\n")
+
+    return config
 
 
 # ============================================================================
@@ -635,19 +701,76 @@ def process_book(filepath: str, output_dir: str, model: str = DEFAULT_MODEL,
     return docx_ok or md_ok
 
 
+def select_files_interactive(files: List[Path]) -> List[Path]:
+    """
+    Permette all'utente di selezionare interattivamente i file da elaborare.
+
+    Args:
+        files: Lista di file disponibili
+
+    Returns:
+        Lista di file selezionati
+    """
+    print(f"\n📋 File disponibili ({len(files)}):")
+    print("-" * 70)
+    for idx, filepath in enumerate(files, 1):
+        print(f"   {idx}. {filepath.name}")
+    print("-" * 70)
+
+    print("\nInserisci i numeri dei file da elaborare separati da virgola")
+    print("(es: 1,3,5 oppure 'all' per tutti, 'q' per uscire)")
+
+    while True:
+        selection = input("\nSelezione: ").strip().lower()
+
+        if selection == 'q':
+            print("Operazione annullata.")
+            sys.exit(0)
+
+        if selection == 'all':
+            return files
+
+        try:
+            indices = [int(x.strip()) for x in selection.split(',')]
+            selected = []
+
+            for idx in indices:
+                if 1 <= idx <= len(files):
+                    selected.append(files[idx - 1])
+                else:
+                    print(f"⚠️  Indice {idx} non valido (range: 1-{len(files)})")
+                    continue
+
+            if selected:
+                print(f"\n✅ Selezionati {len(selected)} file:")
+                for f in selected:
+                    print(f"   - {f.name}")
+                return selected
+            else:
+                print("⚠️  Nessun file selezionato. Riprova.")
+
+        except ValueError:
+            print("⚠️  Formato non valido. Usa numeri separati da virgola (es: 1,2,3)")
+
+
 def main():
     """Funzione principale del programma."""
+    # Mostra sempre il banner all'avvio
+    show_banner()
+
     parser = argparse.ArgumentParser(
         description="CLI Tool per Riassunti di Libri via Ollama",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Esempi:
-  python riassumi_libri.py
+  python riassumi_libri.py --interactive
   python riassumi_libri.py --model qwen3:30b --min_words 500
   python riassumi_libri.py --input_dir /path/to/books --output_dir /path/to/output
         """
     )
 
+    parser.add_argument('--interactive', '-i', action='store_true',
+                       help='Modalità interattiva con domande guidate')
     parser.add_argument('--model', type=str, default=DEFAULT_MODEL,
                        help=f'Modello Ollama da usare (default: {DEFAULT_MODEL})')
     parser.add_argument('--input_dir', type=str, default=DEFAULT_INPUT_DIR,
@@ -661,14 +784,23 @@ Esempi:
 
     args = parser.parse_args()
 
-    print("\n" + "="*60)
-    print("📚 RIASSUMI LIBRI - CLI Tool via Ollama")
-    print("="*60)
+    # Modalità interattiva
+    select_files = False
+    if args.interactive:
+        config = interactive_setup()
+        args.model = config['model']
+        args.input_dir = config['input_dir']
+        args.output_dir = config['output_dir']
+        args.min_words = config['min_words']
+        select_files = config['select_files']
+
+    print("📋 PARAMETRI DI ESECUZIONE")
+    print("="*70)
     print(f"Modello: {args.model}")
     print(f"Input: {args.input_dir}")
     print(f"Output: {args.output_dir}")
     print(f"Min parole/capitolo: {args.min_words}")
-    print("="*60 + "\n")
+    print("="*70 + "\n")
 
     # Verifica directory input
     if not os.path.exists(args.input_dir):
@@ -693,6 +825,10 @@ Esempi:
         sys.exit(1)
 
     print(f"✅ Trovati {len(files)} file: {', '.join([f.name for f in files])}\n")
+
+    # Selezione file interattiva se richiesto
+    if select_files:
+        files = select_files_interactive(files)
 
     # Crea directory output
     try:
